@@ -1,0 +1,9 @@
+{
+  "start_backend": true,
+  "backend_host": "127.0.0.1",
+  "backend_port": 8000,
+  "linkedin_url": "https://www.linkedin.com/feed/",
+  "chrome_path": "",
+  "chrome_profile_dir": "",
+  "check_interval_seconds": 30
+}
