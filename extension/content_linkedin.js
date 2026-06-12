@@ -13,7 +13,7 @@
   // Content-script build marker — printed on every injection. Confirms which
   // content-script version is live from the LinkedIn tab's DevTools (the SW
   // build marker only proves the worker; this proves the page code).
-  const COHERENT_CS_BUILD = '2026-06-12-iframes-v28';
+  const COHERENT_CS_BUILD = '2026-06-12-sendbtn-v29';
   LOG('content_linkedin.js loaded — build', COHERENT_CS_BUILD);
 
   // 45s: the DM flow alone can spend ~8s waiting for Send to enable plus the
@@ -748,23 +748,39 @@
     LOG('Composer body length:', (editor.innerText || '').trim().length);
 
     // ── Send — every handle (form, button) taken from THIS window only ──
+    // Use the editor's OWN realm for constructors/events: in the iframe-hosted
+    // pane, top-realm synthetic events can be ignored by the pane's framework.
+    const EW = editor.ownerDocument?.defaultView || window;
     const form = editor.closest('form, .msg-form') || win.querySelector('form, .msg-form');
-    let sendBtn = win.querySelector('button.msg-form__send-button, button[type="submit"]')
-      || [...win.querySelectorAll('button')].find((b) => {
+    const findSendBtn = () => {
+      const direct = win.querySelector('button.msg-form__send-button, button[type="submit"]');
+      if (direct) return direct;
+      return [...win.querySelectorAll('button, [role="button"]')].find((b) => {
         const t = (b.innerText || '').trim().toLowerCase();
         const a = (b.getAttribute('aria-label') || '').toLowerCase();
-        return t === 'send' || a === 'send' || a.startsWith('press enter to send');
+        if (t === 'send' || a === 'send' || a.startsWith('press enter to send')
+            || a === 'send message' || /^send\b/.test(a) || /^send\b/.test(t)) return true;
+        // Icon-only send control in the new pane.
+        return !!b.querySelector('svg[data-test-icon*="send"], use[href*="send"]');
       }) || null;
+    };
+    let sendBtn = findSendBtn();
     // Wait up to ~8s for the controller to enable Send after registering text.
     for (let i = 0; i < 26 && sendBtn && (sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true'); i++) {
       await sleep(300);
+      sendBtn = findSendBtn() || sendBtn;
     }
-    // (a) mouse-sequence click
+    const sendState = () =>
+      `btn=${sendBtn ? `"${(sendBtn.getAttribute('aria-label') || sendBtn.innerText || sendBtn.className || '?').toString().slice(0, 40)}"` : 'none'} `
+      + `dis=${sendBtn ? (sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') : '-'} form=${!!form}`;
+    LOG('Send state:', sendState());
+    // (a) native click + mouse-sequence click (realm-correct)
     if (sendBtn) {
       try {
+        sendBtn.click();
         ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((t) =>
-          sendBtn.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, composed: true, view: window })));
-        LOG('Clicked Send (mouse sequence).');
+          sendBtn.dispatchEvent(new EW.MouseEvent(t, { bubbles: true, cancelable: true, composed: true, view: EW })));
+        LOG('Clicked Send (native + mouse sequence).');
       } catch (e) { WARN('Send click failed:', e?.message || e); }
     }
     await sleep(800);
@@ -774,24 +790,24 @@
       catch (e) { /* fall through */ }
       await sleep(700);
     }
-    // (c) Enter-to-send
+    // (c) Enter-to-send (realm-correct)
     if (editor.isConnected && !isComposerEmpty(editor)) {
       try {
         editor.focus();
         const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
-        editor.dispatchEvent(new KeyboardEvent('keydown', opts));
-        editor.dispatchEvent(new KeyboardEvent('keyup', opts));
+        editor.dispatchEvent(new EW.KeyboardEvent('keydown', opts));
+        editor.dispatchEvent(new EW.KeyboardEvent('keyup', opts));
         LOG('Tried Enter-to-send.');
       } catch (e) { /* best-effort */ }
     }
 
     // ── Post-send verification ──────────────────────────────────────────
     await sleep(1500);
-    if (!editor.isConnected || isComposerEmpty(editor)) {
+    if (!editor.isConnected || !win.isConnected || isComposerEmpty(editor)) {
       LOG('Send confirmed (composer cleared/detached).');
       return { providerMessageId: `li-dm:${targetVanity}#${Date.now()}` };
     }
-    throw new Error('send_click_was_noop_composer_still_has_text');
+    throw new Error(`send_click_was_noop_composer_still_has_text [${sendState()}]`);
   }
 
   // ── Connect: locate the REAL profile connect control ────────────────────

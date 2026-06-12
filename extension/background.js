@@ -17,7 +17,7 @@
 // Build marker — printed every time the service worker boots. If you do NOT see
 // this exact line in the service-worker console, Chrome is running a stale,
 // cached worker and the fixes below are NOT active.
-const COHERENT_BUILD = "2026-06-12-iframes-v28";
+const COHERENT_BUILD = "2026-06-12-sendbtn-v29";
 console.log(`[coherent] background.js loaded — build ${COHERENT_BUILD}`);
 
 const POLL_ALARM = "coherent-poll";       // responsive command drain (30s)
