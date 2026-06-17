@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Coherent Outreach</title>
+    <style>
+      body { font-family: system-ui; width: 340px; padding: 12px; }
+      label { display: block; font-size: 12px; color: #444; margin-top: 8px; }
+      input { width: 100%; padding: 6px; font-size: 13px; box-sizing: border-box; font-family: monospace; }
+      button { margin-top: 10px; padding: 6px 10px; }
+      .ok  { color: #16a34a; font-size: 12px; }
+      .warn { color: #b45309; font-size: 11px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <h3 style="margin:0 0 6px">Coherent Outreach bridge</h3>
+    <div class="warn">
+      Get the channel id + token by running: <code>POST /api/channels/linkedin</code>
+      on your backend, or via the Channels page in the dashboard (M7 feature pending).
+      The token is shown ONCE — save it.
+    </div>
+    <label>Platform URL<input id="platformUrl" placeholder="http://localhost:8000" /></label>
+    <label>Channel ID<input id="channelId" type="number" placeholder="e.g. 12" /></label>
+    <label>Extension token<input id="token" type="password" /></label>
+    <button id="save">Save</button>
+    <button id="dash" type="button">Open dashboard</button>
+    <div id="status" class="ok"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

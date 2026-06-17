@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Coherent Outreach</title>
+    <style>
+      :root { --bg:#0b1220; --card:#141d2e; --muted:#7c8aa5; --line:#22304a;
+              --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --txt:#e6edf7; --accent:#3b82f6; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--txt); font-size: 13px; }
+      header { padding:12px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; background:var(--bg); }
+      header h1 { font-size:14px; margin:0; }
+      .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+      .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)}
+      main { padding:12px 14px; }
+      section { margin-bottom:18px; }
+      h2 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 8px; }
+      .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+      .row { display:flex; justify-content:space-between; align-items:center; }
+      .pill { font-size:10px; padding:2px 7px; border-radius:99px; border:1px solid var(--line); color:var(--muted); }
+      .pill.active{ color:#bfe3c6; border-color:#1d3a26; background:#0f1f15 }
+      .pill.paused,.pill.draft{ color:#e6cf9a; }
+      .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:8px; }
+      .stat { text-align:center; background:#0d1626; border:1px solid var(--line); border-radius:6px; padding:6px 2px; }
+      .stat b { display:block; font-size:15px; }
+      .stat span { font-size:9px; color:var(--muted); }
+      .kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+      .kpi { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px; text-align:center; }
+      .kpi b { display:block; font-size:18px; }
+      .kpi span { font-size:10px; color:var(--muted); }
+      .log { font-family: ui-monospace, monospace; font-size:11px; }
+      .log .item { padding:5px 0; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:baseline; }
+      .log .item:last-child { border-bottom:0; }
+      .tag { font-size:9px; padding:1px 6px; border-radius:4px; }
+      .tag.done{ background:#0f1f15; color:#7fe3a0 }
+      .tag.failed{ background:#2a1313; color:#f0a3a3 }
+      .tag.pending,.tag.claimed{ background:#0e1a2e; color:#9bc1f0 }
+      .muted { color:var(--muted); }
+      .warnbar { background:#2a1f0c; border:1px solid #5b430f; color:#f0d49a; padding:8px 10px; border-radius:8px; margin-bottom:10px; font-size:12px; display:none; }
+      button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:5px 10px; font-size:12px; cursor:pointer; }
+      button.ghost { background:transparent; border:1px solid var(--line); color:var(--txt); }
+      .toggle { display:flex; gap:6px; }
+      .empty { color:var(--muted); font-style:italic; padding:8px 0; }
+      .err { color:#f0a3a3; }
+      a { color:var(--accent); text-decoration:none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Coherent Outreach</h1>
+      <span id="conn" class="muted"><span class="dot warn"></span>connecting…</span>
+    </header>
+    <main>
+      <div id="alert" class="warnbar"></div>
+
+      <section>
+        <h2>Today</h2>
+        <div class="kpis">
+          <div class="kpi"><b id="k-sent">–</b><span>sent today</span></div>
+          <div class="kpi"><b id="k-accepted">–</b><span>accepted today</span></div>
+          <div class="kpi"><b id="k-cap">–</b><span>cap used</span></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Warm-up <span id="warm-state" class="muted"></span></h2>
+        <div class="card">
+          <div class="row">
+            <span id="warm-summary" class="muted">human-like activity</span>
+            <span class="toggle"><button id="warm-toggle" class="ghost">…</button></span>
+          </div>
+          <div class="stats" id="warm-stats"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Campaigns</h2>
+        <div id="campaigns"><div class="empty">loading…</div></div>
+      </section>
+
+      <section>
+        <h2>Connection status</h2>
+        <div id="leads"><div class="empty">loading…</div></div>
+      </section>
+
+      <section>
+        <h2>Live activity</h2>
+        <div class="card log" id="activity"><div class="empty">loading…</div></div>
+      </section>
+
+      <section>
+        <h2>System health</h2>
+        <div class="card" id="health"><div class="empty">loading…</div></div>
+      </section>
+    </main>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
