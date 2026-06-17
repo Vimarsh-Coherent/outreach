@@ -3,8 +3,9 @@ import re
 _TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\|([^}]*))?\}\}")
 
 # Tokens that can be substituted in subject + body.
-# Keys are the canonical contact-snapshot field names.
-SUPPORTED_TOKENS = ("first_name", "last_name", "company", "title", "email")
+# Contact tokens come from the contact snapshot; sender_name is injected from the
+# sending user's display_name at render time (see workers/dispatcher.py).
+SUPPORTED_TOKENS = ("first_name", "last_name", "company", "title", "email", "sender_name")
 
 
 def render(text: str | None, snapshot: dict) -> str:

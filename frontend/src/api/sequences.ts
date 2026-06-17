@@ -63,6 +63,46 @@ export interface EnrolmentResult {
   skipped_no_identity: number;
 }
 
+export interface SequenceGenerateResponse {
+  sequence: SequenceDetail;
+  warnings: string[];
+}
+
+export type GroundingVerdict = "grounded" | "weak" | "possible_hallucination";
+
+export interface GroundingDocument {
+  id: number;
+  filename: string;
+  status: string;
+  indexed: boolean;
+}
+
+export interface StepGrounding {
+  step_id: number;
+  step_order: number;
+  channel: StepChannel;
+  subject: string | null;
+  similarity: number;
+  mean_top_k: number;
+  supported_ratio: number;
+  verdict: GroundingVerdict;
+  best_chunk_filename: string | null;
+}
+
+export interface SequenceGrounding {
+  sequence_id: number;
+  documents: GroundingDocument[];
+  has_indexed_docs: boolean;
+  chunk_count: number;
+  avg_similarity: number;
+  steps: StepGrounding[];
+  note: string | null;
+}
+
+export async function getSequenceGrounding(id: number) {
+  return (await api.get<SequenceGrounding>(`/sequences/${id}/grounding`)).data;
+}
+
 export async function listSequences() {
   return (await api.get<SequenceOut[]>("/sequences")).data;
 }
@@ -71,6 +111,13 @@ export async function getSequence(id: number) {
 }
 export async function createSequence(dto: SequenceCreate) {
   return (await api.post<SequenceOut>("/sequences", dto)).data;
+}
+export async function generateSequenceFromPrompt(dto: {
+  prompt: string;
+  timezone?: string;
+  document_ids?: number[];
+}) {
+  return (await api.post<SequenceGenerateResponse>("/sequences/generate", dto)).data;
 }
 export async function updateSequence(id: number, dto: Partial<SequenceCreate>) {
   return (await api.patch<SequenceOut>(`/sequences/${id}`, dto)).data;

@@ -11,6 +11,7 @@ from outreach.api import (
     routes_followups,
     routes_health,
     routes_leads,
+    routes_sequence_rag,
     routes_sequences,
     routes_timeline,
     routes_watchdog,
@@ -48,6 +49,7 @@ app.include_router(routes_health.router)
 app.include_router(routes_channels.router)
 app.include_router(routes_leads.router)
 app.include_router(routes_sequences.router)
+app.include_router(routes_sequence_rag.router)
 app.include_router(routes_enrolments.router)
 app.include_router(routes_timeline.router)
 app.include_router(routes_dashboard.router)

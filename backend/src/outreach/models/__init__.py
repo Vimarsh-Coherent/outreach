@@ -4,6 +4,8 @@ from outreach.models.event import Event, ReplySentiment
 from outreach.models.lead import Lead
 from outreach.models.li_command import LinkedInCommand
 from outreach.models.sequence import Sequence
+from outreach.models.sequence_rag_document import SequenceRagDocument
+from outreach.models.sequence_rag_source import SequenceRagSource
 from outreach.models.step import SequenceStep
 from outreach.models.step_run import StepRun
 from outreach.models.suppression import Suppression
@@ -18,6 +20,8 @@ __all__ = [
     "LinkedInCommand",
     "ReplySentiment",
     "Sequence",
+    "SequenceRagDocument",
+    "SequenceRagSource",
     "SequenceStep",
     "StepRun",
     "Suppression",

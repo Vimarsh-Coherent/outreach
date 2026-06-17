@@ -51,9 +51,17 @@ export default function Sequences() {
           <h2 className="text-2xl font-semibold">Sequences</h2>
           <p className="text-sm text-slate-500 mt-1">Multi-step outreach cadences. Each sequence runs in its own timezone + business hours.</p>
         </div>
-        <button onClick={() => setShowNew(s => !s)} className="border rounded px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700">
-          {showNew ? "Cancel" : "+ New sequence"}
-        </button>
+        <div className="flex gap-2">
+          <Link
+            to="/sequences/generate"
+            className="border rounded px-3 py-1.5 bg-sky-600 text-white hover:bg-sky-700"
+          >
+            + AI sequence
+          </Link>
+          <button onClick={() => setShowNew(s => !s)} className="border rounded px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700">
+            {showNew ? "Cancel" : "+ New sequence"}
+          </button>
+        </div>
       </div>
 
       {showNew && (

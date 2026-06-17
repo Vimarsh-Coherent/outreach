@@ -100,6 +100,17 @@ class SequenceDetail(SequenceOut):
     steps: list[StepOut]
 
 
+class SequenceGenerateRequest(BaseModel):
+    prompt: str = Field(min_length=10, max_length=4000)
+    timezone: str = Field(default="Asia/Kolkata", max_length=64)
+    document_ids: list[int] = Field(default_factory=list)
+
+
+class SequenceGenerateResponse(BaseModel):
+    sequence: SequenceDetail
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ReorderRequest(BaseModel):
     step_ids: list[int] = Field(min_length=1, max_length=50)
 

@@ -29,6 +29,7 @@ from outreach.models.lead import Lead
 from outreach.models.sequence import Sequence
 from outreach.models.step import SequenceStep
 from outreach.models.step_run import StepRun
+from outreach.models.user import User
 from outreach.schemas.channels import SMTPConfig
 from outreach.services.cap_check import bump_or_reject, refund_one
 from outreach.services.jitter import add_jitter
@@ -295,6 +296,10 @@ async def process_one(claim: dict) -> dict:
         if enrolment is None:
             return {"step_run_id": step_run_id, "result": "missing_enrolment"}
 
+        # Sender name for {{sender_name}} sign-offs — the sending user's display name.
+        sender = await session.get(User, enrolment.user_id)
+        sender_name = sender.display_name if sender else ""
+
         step = await session.scalar(select(SequenceStep).where(SequenceStep.id == run.step_id))
         if step is None:
             await _mark_run_failed(session, run.id, "step deleted")
@@ -421,7 +426,7 @@ async def process_one(claim: dict) -> dict:
                 await session.commit()
                 return {"step_run_id": step_run_id, "result": "extension_offline"}
 
-            snapshot = enrolment.contact_snapshot or {}
+            snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
             rendered_body = render(step.body, snapshot)
             cmd = LinkedInCommand(
                 user_id=enrolment.user_id,
@@ -481,7 +486,7 @@ async def process_one(claim: dict) -> dict:
 
     # ---- SMTP call OUTSIDE any DB transaction ----
     message_id = make_message_id(step_run_id)
-    snapshot = enrolment.contact_snapshot or {}
+    snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
     rendered_subject = render(step.subject, snapshot)
     rendered_body = render(step.body, snapshot)
 
