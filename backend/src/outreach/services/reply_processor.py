@@ -90,7 +90,7 @@ async def process(session: AsyncSession, parsed: ParsedInbound) -> dict:
         enrolment_id=enrolment.id,
         step_run_id=run.id,
         event_type=parsed.kind,
-        channel="email",
+        channel=parsed.channel,
         external_id=parsed.inbound_message_id,
         payload={
             "from": parsed.from_addr,

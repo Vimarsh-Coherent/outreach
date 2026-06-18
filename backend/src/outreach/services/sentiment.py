@@ -6,20 +6,16 @@ follow-up agent (M9).
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Literal
 
-import httpx
-from anthropic import AsyncAnthropic
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from outreach.config import get_settings
 from outreach.models.event import Event, ReplySentiment
 from outreach.models.step_run import StepRun
+from outreach.services import llm_client
 
 log = logging.getLogger("outreach.sentiment")
 
@@ -32,7 +28,7 @@ VALID_LABELS: set[str] = {
     "negative", "unsubscribe", "auto_reply", "neutral",
 }
 
-DEFAULT_MODEL = "claude-haiku-4-5"
+DEFAULT_MODEL = "claude-haiku-4-5"  # Anthropic model when DeepSeek isn't configured
 
 SYSTEM_PROMPT = (
     "You classify cold-outreach reply emails. "
@@ -57,15 +53,9 @@ USER_TEMPLATE = (
 
 
 def _parse_json_response(text: str) -> dict | None:
-    """Claude usually returns clean JSON, but sometimes wraps it in prose or
-    code fences. Extract the first {...} block and parse."""
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    """Extract the classification JSON. Robust to markdown fences + surrounding
+    prose (DeepSeek/Claude both add these intermittently)."""
+    return llm_client.extract_json_object(text, prefer_keys=("label",))
 
 
 async def classify_reply(
@@ -77,10 +67,11 @@ async def classify_reply(
 
     On any error returns ('neutral', 0.0, <error message>) — sentiment is
     advisory; we should never block the reply pipeline on a classifier hiccup.
+
+    Runs on the active LLM provider (DeepSeek if configured, else Anthropic Haiku).
     """
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        return "neutral", 0.0, "no ANTHROPIC_API_KEY"
+    if llm_client.active_provider() is None:
+        return "neutral", 0.0, "no LLM API key configured"
 
     outreach_str = f"Subject: {original_subject or '(none)'}\n\n{original_body or '(missing)'}"
     user = USER_TEMPLATE.format(
@@ -90,20 +81,15 @@ async def classify_reply(
         reply=(reply_body or "")[:4000],
     )
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     try:
-        response = await client.messages.create(
-            model=model,
-            max_tokens=200,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user}],
+        result = await llm_client.complete(
+            system=SYSTEM_PROMPT, user=user, max_tokens=200, anthropic_model=model,
         )
-    except (httpx.HTTPError, Exception) as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         log.warning("sentiment call failed: %s", e)
         return "neutral", 0.0, f"api error: {type(e).__name__}"
 
-    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    payload = _parse_json_response(text) or {}
+    payload = _parse_json_response(result.text) or {}
     label = str(payload.get("label", "neutral")).strip().lower()
     if label not in VALID_LABELS:
         label = "neutral"
@@ -171,7 +157,7 @@ async def classify_and_store(session: AsyncSession, event_id: int) -> dict:
             inbound_subject=inbound_subject,
             inbound_from=inbound_from,
         )
-        model = DEFAULT_MODEL
+        model = "deepseek" if llm_client.active_provider() == "deepseek" else DEFAULT_MODEL
 
     stmt = insert(ReplySentiment).values(
         event_id=event_id, label=label, confidence=confidence,

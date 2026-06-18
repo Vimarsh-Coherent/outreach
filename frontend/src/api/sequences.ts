@@ -126,11 +126,28 @@ export async function generateSequenceFromPrompt(dto: {
 }) {
   return (await api.post<SequenceGenerateResponse>("/sequences/generate", dto)).data;
 }
+
+export interface SequenceGenerateRequest {
+  name: string;
+  description: string;
+  channels: ("email" | "linkedin")[];
+  num_emails?: number;
+  timezone?: string;
+  test_mode?: boolean;
+}
+export async function generateSequence(dto: SequenceGenerateRequest) {
+  return (await api.post<SequenceDetail>("/sequences/generate-quick", dto)).data;
+}
 export async function updateSequence(id: number, dto: Partial<SequenceCreate>) {
   return (await api.patch<SequenceOut>(`/sequences/${id}`, dto)).data;
 }
 export async function changeStatus(id: number, status: SequenceStatus) {
   return (await api.post<SequenceOut>(`/sequences/${id}/status`, { status })).data;
+}
+
+export interface TestNowResult { fired: number; activated?: boolean; enrolment_ids: number[]; }
+export async function testNow(id: number) {
+  return (await api.post<TestNowResult>(`/sequences/${id}/test-now`)).data;
 }
 export async function deleteSequence(id: number) {
   await api.delete(`/sequences/${id}`);

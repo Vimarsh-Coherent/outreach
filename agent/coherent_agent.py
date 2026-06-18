@@ -45,9 +45,25 @@ def load_config() -> dict:
         "start_backend": True,
         "backend_host": "127.0.0.1",
         "backend_port": 8000,
+        # WhatsApp (Baileys) sidecar — the agent keeps it alive like the backend.
+        # On first run it auto-installs node deps if node_modules is missing.
+        "start_whatsapp_sidecar": True,
+        "whatsapp_sidecar_dir": str(HERE.parent / "whatsapp-sidecar"),
+        "whatsapp_port": 8085,
+        "whatsapp_api_key": "",   # shared secret; must match backend WA_API_KEY (empty = local only)
+        "node_path": "",          # auto-detected if empty
         "linkedin_url": "https://www.linkedin.com/feed/",
+        # dedicated_profile=True  → launch an isolated Chrome profile w/ the
+        #   unpacked extension auto-loaded (relaunched if it dies).
+        # dedicated_profile=False → open LinkedIn in the user's EXISTING default
+        #   Chrome (already has the extension + login), once per online session.
+        "dedicated_profile": True,
         "chrome_path": "",          # auto-detected if empty
-        "chrome_profile_dir": "",   # defaults to %LOCALAPPDATA%\\CoherentOutreach\\chrome-profile
+        "chrome_profile_dir": "",   # dedicated mode: defaults to %LOCALAPPDATA%\\CoherentOutreach\\chrome-profile
+        # existing-chrome mode: which installed Chrome profile to open LinkedIn
+        # in (the directory name under "User Data", e.g. "Default", "Profile 1").
+        # Empty = Chrome's last-used profile.
+        "chrome_profile_directory": "",
         "check_interval_seconds": 30,
     }
     if CONFIG_PATH.exists():
@@ -74,6 +90,20 @@ def find_chrome(cfg: dict) -> str | None:
             return c
     found = shutil.which("chrome") or shutil.which("chrome.exe")
     return found
+
+
+def find_node(cfg: dict) -> str | None:
+    if cfg.get("node_path") and Path(cfg["node_path"]).exists():
+        return cfg["node_path"]
+    candidates = [
+        r"C:\Program Files\nodejs\node.exe",
+        r"C:\Program Files (x86)\nodejs\node.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Programs\nodejs\node.exe"),
+    ]
+    for c in candidates:
+        if c and Path(c).exists():
+            return c
+    return shutil.which("node") or shutil.which("node.exe")
 
 
 def port_open(host: str, port: int, timeout: float = 2.0) -> bool:
@@ -135,6 +165,70 @@ def ensure_backend(cfg: dict) -> None:
         time.sleep(1)
 
 
+# ── WhatsApp sidecar (Baileys) ───────────────────────────────────────────────
+_wa_proc: subprocess.Popen | None = None
+_wa_deps_checked = False
+
+
+def _ensure_wa_deps(cfg: dict, npm: str | None) -> bool:
+    """Install node deps once if node_modules is missing. Returns True if ready."""
+    global _wa_deps_checked
+    sidecar = Path(cfg["whatsapp_sidecar_dir"])
+    if (sidecar / "node_modules").is_dir():
+        return True
+    if _wa_deps_checked:
+        return (sidecar / "node_modules").is_dir()
+    _wa_deps_checked = True
+    if not npm:
+        log.error("npm not found — cannot install WhatsApp sidecar deps")
+        return False
+    log.info("installing WhatsApp sidecar deps (first run, one-time)…")
+    try:
+        subprocess.run(
+            [npm, "install", "--no-audit", "--no-fund"],
+            cwd=str(sidecar), check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as e:  # noqa: BLE001
+        log.error("npm install failed for WhatsApp sidecar: %s", e)
+        return False
+    return (sidecar / "node_modules").is_dir()
+
+
+def ensure_whatsapp_sidecar(cfg: dict, node: str) -> None:
+    global _wa_proc
+    if port_open(cfg["backend_host"], int(cfg["whatsapp_port"])):
+        return  # already up (we or a manual run) — leave it
+    if _wa_proc and _wa_proc.poll() is None:
+        return  # we started it and it's still booting
+    sidecar = Path(cfg["whatsapp_sidecar_dir"])
+    server = sidecar / "server.js"
+    if not server.exists():
+        log.error("whatsapp sidecar not found at %s", server)
+        return
+    npm = shutil.which("npm") or shutil.which("npm.cmd")
+    if not _ensure_wa_deps(cfg, npm):
+        return
+    env = dict(os.environ)
+    env["WA_PORT"] = str(cfg["whatsapp_port"])
+    env["WA_API_KEY"] = cfg.get("whatsapp_api_key", "") or ""
+    env["WA_SESSION_PATH"] = str(sidecar / "data" / "wa-session")
+    env["WA_BACKEND_INBOUND_URL"] = (
+        f"http://{cfg['backend_host']}:{cfg['backend_port']}/api/whatsapp/inbound"
+    )
+    log.info("starting WhatsApp sidecar (Baileys) on port %s…", cfg["whatsapp_port"])
+    _wa_proc = subprocess.Popen(
+        [node, "server.js"],
+        cwd=str(sidecar), env=env,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    for _ in range(15):
+        if port_open(cfg["backend_host"], int(cfg["whatsapp_port"])):
+            log.info("WhatsApp sidecar is up on port %s", cfg["whatsapp_port"])
+            return
+        time.sleep(1)
+
+
 # ── Chrome ──────────────────────────────────────────────────────────────────
 _chrome_proc: subprocess.Popen | None = None
 
@@ -156,20 +250,56 @@ def ensure_chrome(cfg: dict, chrome: str) -> None:
     ])
 
 
+def open_linkedin_existing(cfg: dict, chrome: str) -> None:
+    """Open LinkedIn in the user's DEFAULT Chrome (existing profile + already-
+    installed extension). When Chrome is already running this just adds a tab and
+    the launched process returns immediately — so we do NOT track it; the main
+    loop calls this only on an offline→online transition (incl. boot), so it
+    opens one tab per reconnect instead of spamming a tab every interval."""
+    prof = cfg.get("chrome_profile_directory") or ""
+    log.info("opening LinkedIn in existing Chrome (profile=%s)…", prof or "last-used")
+    args = [chrome]
+    if prof:
+        args.append(f"--profile-directory={prof}")
+    args.append(cfg["linkedin_url"])
+    try:
+        subprocess.Popen(args)
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not open LinkedIn in existing Chrome: %s", e)
+
+
 def main() -> int:
     cfg = load_config()
-    log.info("agent starting; repo=%s", cfg["repo_dir"])
+    dedicated = bool(cfg.get("dedicated_profile", True))
+    log.info("agent starting; repo=%s; mode=%s", cfg["repo_dir"],
+             "dedicated-profile" if dedicated else "existing-chrome")
     chrome = find_chrome(cfg)
     if not chrome:
         log.error("Chrome not found. Set 'chrome_path' in agent.config.json.")
         return 1
 
+    node = find_node(cfg) if cfg.get("start_whatsapp_sidecar") else None
+    if cfg.get("start_whatsapp_sidecar") and not node:
+        log.warning("Node.js not found — WhatsApp sidecar disabled. Install Node or set 'node_path'.")
+
+    was_online = False
     while True:
         try:
-            wait_for_internet()
-            if cfg.get("start_backend"):
-                ensure_backend(cfg)
-            ensure_chrome(cfg, chrome)
+            online = have_internet()
+            if online:
+                if cfg.get("start_backend"):
+                    ensure_backend(cfg)
+                if cfg.get("start_whatsapp_sidecar") and node:
+                    ensure_whatsapp_sidecar(cfg, node)
+                if dedicated:
+                    # Keep the isolated Chrome alive (relaunch if it died).
+                    ensure_chrome(cfg, chrome)
+                elif not was_online:
+                    # Existing-Chrome mode: open LinkedIn once per reconnect.
+                    open_linkedin_existing(cfg, chrome)
+            elif was_online:
+                log.info("internet lost — will reopen LinkedIn on reconnect")
+            was_online = online
         except Exception as e:  # noqa: BLE001
             log.exception("agent loop error: %s", e)
         time.sleep(int(cfg["check_interval_seconds"]))

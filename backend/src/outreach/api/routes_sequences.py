@@ -11,6 +11,7 @@ from outreach.schemas.sequences import (
     ReorderRequest,
     SequenceCreate,
     SequenceDetail,
+    QuickGenerateRequest,
     SequenceGenerateRequest,
     SequenceGenerateResponse,
     SequenceOut,
@@ -22,6 +23,7 @@ from outreach.schemas.sequences import (
 from outreach.services import (
     enrolments_service,
     grounding_service,
+    quick_generator,
     sequence_generator,
     sequences_service,
 )
@@ -52,10 +54,25 @@ async def generate_sequence_from_prompt(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> SequenceGenerateResponse:
+    """RAG: a prompt (+ optional linked documents) → a grounded AI sequence."""
     detail, warnings = await sequence_generator.generate_sequence_from_prompt(
         session, user.id, dto.prompt, dto.timezone, dto.document_ids or None,
     )
     return SequenceGenerateResponse(sequence=detail, warnings=warnings)
+
+
+@router.post("/generate-quick", response_model=SequenceDetail, status_code=201)
+async def generate_sequence_quick(
+    dto: QuickGenerateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SequenceDetail:
+    """Channels-based quick generator (Sequences page → ✨ Generate with AI panel)."""
+    return await quick_generator.generate_sequence(
+        session, user.id,
+        name=dto.name, description=dto.description, channels=dto.channels,
+        num_emails=dto.num_emails, timezone=dto.timezone, test_mode=dto.test_mode,
+    )
 
 
 @router.get("/{sequence_id}", response_model=SequenceDetail)
@@ -94,6 +111,16 @@ async def change_status(
     session: AsyncSession = Depends(get_session),
 ) -> SequenceOut:
     return await sequences_service.change_status(session, user.id, sequence_id, dto.status)
+
+
+@router.post("/{sequence_id}/test-now")
+async def test_now(
+    sequence_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Fire this sequence's scheduled enrolments immediately (bypass send window)."""
+    return await sequences_service.test_now(session, user.id, sequence_id)
 
 
 @router.delete("/{sequence_id}", status_code=204)

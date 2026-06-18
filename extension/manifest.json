@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Coherent Outreach Bridge",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Executes LinkedIn outreach commands queued by the Coherent Outreach backend.",
   "permissions": ["storage", "alarms", "scripting", "sidePanel"],
   "host_permissions": [

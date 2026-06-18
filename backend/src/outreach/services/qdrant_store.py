@@ -41,7 +41,15 @@ class RetrievedChunk:
 @lru_cache
 def _client() -> QdrantClient:
     settings = get_settings()
-    return QdrantClient(url=settings.qdrant_url)
+    url = (settings.qdrant_url or "").strip()
+    # Use a remote Qdrant SERVER only when an explicit non-local URL is set.
+    # Otherwise run EMBEDDED local mode (in-process, persisted to qdrant_local_path)
+    # so RAG works with no Docker / no server. Point QDRANT_URL at a remote host
+    # to switch to a real server.
+    is_local = (not url) or ("127.0.0.1" in url) or ("localhost" in url)
+    if not is_local:
+        return QdrantClient(url=url)
+    return QdrantClient(path=str(settings.qdrant_path))
 
 
 def _collection_name() -> str:

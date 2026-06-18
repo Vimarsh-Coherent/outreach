@@ -176,6 +176,12 @@ async def change_status(
                 "sequence has LinkedIn steps but no active LinkedIn channel — "
                 "create one in Channels and connect the Chrome extension first",
             )
+        if "whatsapp" in step_channels and not await _has_channel("whatsapp"):
+            raise HTTPException(
+                400,
+                "sequence has WhatsApp steps but no active WhatsApp channel — "
+                "connect WhatsApp in Channels (scan the QR) first",
+            )
     s.status = target
     if target == "archived":
         # Auto-stop active/paused enrolments
@@ -195,6 +201,46 @@ async def change_status(
     await session.commit()
     await session.refresh(s)
     return _to_out(s, await _load_step_count(session, s.id), await _load_active_enrolments(session, s.id))
+
+
+async def test_now(session: AsyncSession, user_id: int, sequence_id: int) -> dict:
+    """Pull every future-scheduled enrolment forward to NOW so the sequence
+    fires immediately, bypassing the send-window wait — for testing.
+
+    Only touches active enrolments whose next_send_at is in the FUTURE: this
+    deliberately skips enrolments parked with next_send_at=NULL (those are
+    in-flight, waiting on a LinkedIn command webhook — bumping them would mint a
+    duplicate command) and ones already due (they fire on the next tick anyway).
+    """
+    from sqlalchemy import text as _text
+
+    s = await session.scalar(
+        select(Sequence).where(Sequence.id == sequence_id, Sequence.user_id == user_id)
+    )
+    if s is None:
+        raise HTTPException(404, "sequence not found")
+    if s.status == "archived":
+        raise HTTPException(400, "cannot test an archived sequence")
+    activated = False
+    if s.status in ("draft", "paused"):
+        # Test-fire: flip to active so the dispatcher will claim the enrolments.
+        # Deliberately SKIP the channel-availability guard that change_status
+        # enforces — this is a test, so a step lacking its channel (e.g. email
+        # with no SMTP channel) just fails on its own rather than blocking the
+        # whole run; the channels that ARE connected still fire.
+        if await _load_step_count(session, s.id) == 0:
+            raise HTTPException(400, "sequence has no steps to test")
+        s.status = "active"
+        activated = True
+    result = await session.execute(_text(
+        "UPDATE outreach.enrolments SET next_send_at = NOW() "
+        "WHERE sequence_id = :sid AND user_id = :uid AND status = 'active' "
+        "  AND next_send_at IS NOT NULL AND next_send_at > NOW() "
+        "RETURNING id"
+    ), {"sid": sequence_id, "uid": user_id})
+    fired = [r[0] for r in result.all()]
+    await session.commit()
+    return {"fired": len(fired), "activated": activated, "enrolment_ids": fired}
 
 
 async def delete_sequence(session: AsyncSession, user_id: int, sequence_id: int) -> bool:

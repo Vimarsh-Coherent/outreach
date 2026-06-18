@@ -17,7 +17,7 @@
 // Build marker — printed every time the service worker boots. If you do NOT see
 // this exact line in the service-worker console, Chrome is running a stale,
 // cached worker and the fixes below are NOT active.
-const COHERENT_BUILD = "2026-06-12-sendbtn-v29";
+const COHERENT_BUILD = "2026-06-16-reloadclean-v33b";
 console.log(`[coherent] background.js loaded — build ${COHERENT_BUILD}`);
 
 const POLL_ALARM = "coherent-poll";       // responsive command drain (30s)
@@ -121,7 +121,22 @@ function waitForTabComplete(tabId, timeoutMs = 15000) {
 async function ensureTabOnTarget(tab, targetUrl) {
   const target = normaliseUrl(targetUrl);
   const current = normaliseUrl(tab.url);
-  if (current === target || current.startsWith(target)) return tab;
+  if (current === target || current.startsWith(target)) {
+    // Already on the target URL — but a PREVIOUS command (esp. a DM) leaves
+    // LinkedIn's messaging overlay open, and it PERSISTS on top of the profile.
+    // The next command then sees "Messaging" / no profile h1 and fails the
+    // identity check (observed live: back-to-back DMs, aditya right after
+    // yuvraj). Critically, this is also why a watchdog RETRY couldn't recover —
+    // the tab was already on the URL, so we skipped reloading and re-ran on the
+    // same stale page. Force a clean reload so the profile re-renders fresh.
+    console.log(`[coherent] tab ${tab.id} already on target — reloading for a clean render`);
+    try {
+      await chrome.tabs.reload(tab.id);
+      await waitForTabComplete(tab.id);
+      await new Promise((r) => setTimeout(r, 1500));
+      return await chrome.tabs.get(tab.id);
+    } catch { return tab; }
+  }
   console.log(`[coherent] navigating tab ${tab.id} → ${targetUrl} (was ${tab.url?.slice(0, 60)})`);
   await chrome.tabs.update(tab.id, { url: targetUrl });
   await waitForTabComplete(tab.id);

@@ -9,15 +9,15 @@ export default defineConfig({
   },
   server: {
     host: "127.0.0.1",
-    port: 5174,
+    port: 5173,
     strictPort: false,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8001",
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
         timeout: 120_000,
       },
-      "/health": "http://127.0.0.1:8001",
+      "/health": "http://127.0.0.1:8000",
     },
   },
 });

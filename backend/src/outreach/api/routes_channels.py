@@ -11,6 +11,9 @@ from outreach.schemas.channels import (
     EmailPreset,
     TestEmailChannelRequest,
     TestEmailChannelResponse,
+    WhatsAppChannelCreate,
+    WhatsAppQrOut,
+    WhatsAppStatusOut,
 )
 from outreach.schemas.extension import LinkedInChannelCreate, LinkedInChannelCreated
 from outreach.services import channels_service
@@ -59,6 +62,60 @@ async def create_linkedin_channel(
     popup. Save it somewhere; you cannot retrieve it again.
     """
     return await channels_service.create_linkedin_channel(session, user.id, dto)
+
+
+@router.post("/whatsapp", response_model=ChannelOut, status_code=201)
+async def create_whatsapp_channel(
+    dto: WhatsAppChannelCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ChannelOut:
+    """Register a WhatsApp channel. The number is linked by scanning the QR
+    (GET /whatsapp/qr) in the Baileys sidecar — this row is the platform handle
+    for caps + activation guards. Idempotent (one WhatsApp number per user)."""
+    return await channels_service.create_whatsapp_channel(session, user.id, dto)
+
+
+@router.get("/whatsapp/status", response_model=WhatsAppStatusOut)
+async def whatsapp_status(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> WhatsAppStatusOut:
+    """Live connection state from the sidecar + whether a channel row exists."""
+    from outreach.channels import whatsapp_channel
+
+    state = await whatsapp_channel.get_connection_state()
+    channel = await channels_service.get_whatsapp_channel(session, user.id)
+    return WhatsAppStatusOut(
+        state=str(state.get("state") or "unavailable"),
+        connected=bool(state.get("connected")),
+        me=state.get("me"),
+        channel_id=channel.id if channel else None,
+    )
+
+
+@router.get("/whatsapp/qr", response_model=WhatsAppQrOut)
+async def whatsapp_qr(
+    user: User = Depends(get_current_user),
+) -> WhatsAppQrOut:
+    """Proxy the sidecar's current QR (PNG data URL) for the UI to render."""
+    from outreach.channels import whatsapp_channel
+
+    data = await whatsapp_channel.get_qr()
+    return WhatsAppQrOut(state=str(data.get("state") or "unavailable"), qr=data.get("qr"))
+
+
+@router.post("/whatsapp/logout")
+async def whatsapp_logout(
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Wipe the sidecar session so a fresh QR is generated (re-link a number)."""
+    from outreach.channels import whatsapp_channel
+
+    try:
+        return await whatsapp_channel.logout()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"WhatsApp sidecar unreachable: {e}")
 
 
 @router.delete("/{channel_id}", status_code=204)

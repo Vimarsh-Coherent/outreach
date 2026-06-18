@@ -31,8 +31,15 @@ class LinkedInConnectStepCreate(_StepBase):
     body: str = Field(min_length=1, max_length=300)
 
 
+class WhatsAppStepCreate(_StepBase):
+    # First-class automated channel (sent via the Baileys sidecar), no subject.
+    channel: Literal["whatsapp"]
+    subject: None = None
+    body: str = Field(min_length=1, max_length=4000)
+
+
 class ManualTaskStepCreate(_StepBase):
-    channel: Literal["call", "sms", "whatsapp"]
+    channel: Literal["call", "sms"]
     subject: str | None = Field(default=None, max_length=250)
     body: str = Field(min_length=1, max_length=4000)
 
@@ -42,6 +49,7 @@ StepCreate = Annotated[
         EmailStepCreate,
         LinkedInDmStepCreate,
         LinkedInConnectStepCreate,
+        WhatsAppStepCreate,
         ManualTaskStepCreate,
     ],
     Field(discriminator="channel"),
@@ -89,6 +97,19 @@ class SequenceUpdate(BaseModel):
 
 class StatusChange(BaseModel):
     status: SequenceStatus
+
+
+# Quick channels-based generator (Sequences page → "✨ Generate with AI" panel).
+# Distinct from the RAG prompt+grounding generator (SequenceGenerateRequest below).
+class QuickGenerateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=10, max_length=4000)
+    channels: list[Literal["email", "linkedin"]] = Field(min_length=1)
+    num_emails: int = Field(default=3, ge=1, le=6)
+    timezone: str = Field(default="Asia/Kolkata", max_length=64)
+    # Test mode: zero all step delays and open the send window to 24/7 so the
+    # whole cadence fires back-to-back regardless of business hours.
+    test_mode: bool = Field(default=False)
 
 
 class SequenceOut(BaseModel):

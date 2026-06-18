@@ -46,6 +46,25 @@ class EmailChannelCreate(BaseModel):
         return self
 
 
+class WhatsAppChannelCreate(BaseModel):
+    display_label: str = Field(min_length=1, max_length=120)
+    daily_cap: int = Field(default=100, ge=1, le=2000)
+
+
+class WhatsAppStatusOut(BaseModel):
+    # Mirrors the sidecar's /getConnectionState, plus whether a platform channel
+    # row exists. state ∈ starting|qr|connected|disconnected|logged_out|unavailable
+    state: str
+    connected: bool
+    me: str | None = None
+    channel_id: int | None = None
+
+
+class WhatsAppQrOut(BaseModel):
+    state: str
+    qr: str | None = None  # PNG data URL while pairing, else null
+
+
 class TestEmailChannelRequest(BaseModel):
     smtp: SMTPConfig
     imap: IMAPConfig | None = None

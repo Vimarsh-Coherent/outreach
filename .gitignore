@@ -28,3 +28,12 @@ backend/rag_eval_report.json
 
 # Added by code-review-graph
 .code-review-graph/
+
+# Local runtime data + leftover artifacts from the abandoned wa-automate attempt
+.node-persist/
+data/wa-session/
+data/backups/
+open-wa-coherent.*.json
+# WhatsApp (Baileys) sidecar runtime — auth session + node deps must never be committed
+whatsapp-sidecar/node_modules/
+whatsapp-sidecar/data/

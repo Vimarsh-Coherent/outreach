@@ -19,12 +19,18 @@ const CHANNEL_LABEL: Record<StepChannel, string> = {
   email: "Email",
   linkedin_dm: "LinkedIn DM",
   linkedin_connect: "LinkedIn Connect (note)",
+  call: "Call (task)",
+  sms: "SMS (task)",
+  whatsapp: "WhatsApp (task)",
 };
 
 const CHANNEL_BODY_CAP: Record<StepChannel, number> = {
   email: 16000,
   linkedin_dm: 8000,
   linkedin_connect: 300,
+  call: 4000,
+  sms: 1600,
+  whatsapp: 4000,
 };
 
 const VERDICT_STYLE: Record<string, { chip: string; label: string }> = {

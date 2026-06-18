@@ -314,8 +314,9 @@ async def process_one(claim: dict) -> dict:
             await session.commit()
             return {"step_run_id": step_run_id, "result": "suppressed"}
 
-        # Manual tasks (call / sms / whatsapp) — log reminder and advance
-        if step.channel in ("call", "sms", "whatsapp"):
+        # Manual tasks (call / sms) — log reminder and advance. WhatsApp is now
+        # a real automated channel (handled below), no longer a manual no-op.
+        if step.channel in ("call", "sms"):
             from outreach.models.event import Event
 
             run.status = "sent"
@@ -451,6 +452,25 @@ async def process_one(claim: dict) -> dict:
 
             snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
             rendered_body = render(step.body, snapshot)
+            # Per-lead AI personalization (Phase 3). Gated by the step's
+            # ai_personalize flag, or the global default. Fail-open: the
+            # personalizer never raises and returns the template on any error,
+            # so a send never blocks on Anthropic availability.
+            if step.config.get("ai_personalize") or get_settings().ai_personalize_linkedin_default:
+                from outreach.services import personalizer
+
+                copy = await personalizer.personalize_linkedin(
+                    kind=command_type,
+                    rendered_body=rendered_body,
+                    snapshot=snapshot,
+                    offering=None,
+                )
+                if copy.used_ai:
+                    log.info(
+                        "personalized linkedin %s for enrolment=%s (lead=%s)",
+                        command_type, enrolment.id, snapshot.get("first_name"),
+                    )
+                rendered_body = copy.body
             cmd = LinkedInCommand(
                 user_id=enrolment.user_id,
                 enrolment_id=enrolment.id,
@@ -465,6 +485,82 @@ async def process_one(claim: dict) -> dict:
             # Don't advance enrolment — wait for /commands/{id}/complete webhook.
             await session.commit()
             return {"step_run_id": step_run_id, "result": "linkedin_queued"}
+
+        # ---- WhatsApp path (Baileys sidecar) ----
+        # Sync send, mirroring email: pick channel → resolve+normalize phone →
+        # cap CAS → POST /sendText to the sidecar OUTSIDE the txn → finalise.
+        if step.channel == "whatsapp":
+            from outreach.services.identity import normalize_phone
+
+            wa_channel = await session.scalar(
+                select(Channel).where(
+                    Channel.user_id == enrolment.user_id,
+                    Channel.channel_type == "whatsapp",
+                    Channel.status == "active",
+                ).order_by(Channel.id.asc()).limit(1)
+            )
+            if wa_channel is None:
+                await _mark_run_failed(
+                    session, run.id,
+                    "no active WhatsApp channel — connect WhatsApp in Channels first",
+                    count_failure=False,
+                )
+                await session.commit()
+                return {"step_run_id": step_run_id, "result": "no_whatsapp_channel"}
+
+            raw_phone = (enrolment.contact_snapshot or {}).get("phone")
+            phone = normalize_phone(raw_phone)
+            if not phone:
+                run.status = "skipped"
+                run.error_message = (
+                    f"unparseable phone: {raw_phone}" if raw_phone else "no phone on contact"
+                )
+                await _advance_enrolment(session, enrolment.id, step.step_order)
+                await session.commit()
+                return {"step_run_id": step_run_id, "result": "no_phone"}
+
+            new_count = await bump_or_reject(session, wa_channel.id)
+            if new_count is None:
+                from datetime import timedelta
+                run.status = "failed"
+                run.error_message = "whatsapp daily cap reached"
+                enrolment.next_send_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                await session.commit()
+                return {"step_run_id": step_run_id, "result": "cap_hit"}
+
+            wa_channel_id = wa_channel.id
+            snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
+            rendered_body = render(step.body, snapshot)
+            await session.commit()  # release row locks before the sidecar HTTP call
+
+            from outreach.channels.whatsapp_channel import send_whatsapp
+            result = await send_whatsapp(phone=phone, body=rendered_body)
+
+            async with SessionLocal() as session_wa:
+                run = await session_wa.scalar(select(StepRun).where(StepRun.id == step_run_id))
+                if run is None:
+                    return {"step_run_id": step_run_id, "result": "missing_run_finalise"}
+                if result.ok:
+                    run.status = "sent"
+                    run.sent_at = datetime.now(timezone.utc)
+                    run.provider_message_id = result.provider_message_id or f"wa-{run.id}"
+                    session_wa.add(Event(
+                        enrolment_id=run.enrolment_id, step_run_id=run.id,
+                        event_type="delivered", channel="whatsapp",
+                        external_id=result.provider_message_id,
+                        payload={"to": phone, "snippet": rendered_body[:200]},
+                        occurred_at=run.sent_at,
+                    ))
+                    await _advance_enrolment(session_wa, run.enrolment_id, step.step_order)
+                else:
+                    await refund_one(session_wa, wa_channel_id)
+                    await _mark_run_failed(session_wa, run.id, result.error or "whatsapp send failed")
+                await session_wa.commit()
+            return {
+                "step_run_id": step_run_id,
+                "result": "sent" if result.ok else "failed",
+                "error": result.error,
+            }
 
         # ---- email path ----
         channel = await _pick_email_channel(session, enrolment.user_id)

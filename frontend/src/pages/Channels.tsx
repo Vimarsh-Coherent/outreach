@@ -9,9 +9,13 @@ import {
   SecurityMode,
   TestEmailChannelResponse,
   createEmailChannel,
+  createWhatsAppChannel,
   deleteChannel,
   getEmailPresets,
+  getWhatsAppQr,
+  getWhatsAppStatus,
   listChannels,
+  logoutWhatsApp,
   testEmailChannel,
 } from "../api/channels";
 
@@ -46,6 +50,129 @@ function StepBadge({ result, label }: { result: { ok: boolean; detail: string; l
         <div className="text-slate-600 font-mono text-xs break-all">{result.detail}</div>
       </div>
     </div>
+  );
+}
+
+const WA_STATE_LABEL: Record<string, { text: string; cls: string }> = {
+  connected: { text: "Connected", cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+  qr: { text: "Scan QR to link", cls: "text-sky-700 bg-sky-50 border-sky-200" },
+  starting: { text: "Starting…", cls: "text-slate-600 bg-slate-50 border-slate-200" },
+  disconnected: { text: "Reconnecting…", cls: "text-amber-700 bg-amber-50 border-amber-200" },
+  logged_out: { text: "Logged out — re-scan", cls: "text-amber-700 bg-amber-50 border-amber-200" },
+  unavailable: { text: "Sidecar offline", cls: "text-rose-700 bg-rose-50 border-rose-200" },
+};
+
+function WhatsAppCard() {
+  const qc = useQueryClient();
+  const [label, setLabel] = useState("WhatsApp");
+  const [cap, setCap] = useState(100);
+  const [waError, setWaError] = useState<string | null>(null);
+
+  const { data: status } = useQuery({
+    queryKey: ["wa-status"],
+    queryFn: getWhatsAppStatus,
+    refetchInterval: 3000,
+  });
+  const connected = status?.state === "connected";
+  // Poll the QR only while pairing (not connected, sidecar reachable).
+  const { data: qr } = useQuery({
+    queryKey: ["wa-qr"],
+    queryFn: getWhatsAppQr,
+    refetchInterval: 2500,
+    enabled: !!status && !connected && status.state !== "unavailable",
+  });
+
+  const createMut = useMutation({
+    mutationFn: async () => createWhatsAppChannel({ display_label: label, daily_cap: cap }),
+    onSuccess: () => {
+      setWaError(null);
+      qc.invalidateQueries({ queryKey: ["channels"] });
+      qc.invalidateQueries({ queryKey: ["wa-status"] });
+    },
+    onError: (e) => setWaError(String(e)),
+  });
+
+  const logoutMut = useMutation({
+    mutationFn: async () => logoutWhatsApp(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wa-status"] });
+      qc.invalidateQueries({ queryKey: ["wa-qr"] });
+    },
+    onError: (e) => setWaError(String(e)),
+  });
+
+  const state = status?.state ?? "starting";
+  const badge = WA_STATE_LABEL[state] ?? WA_STATE_LABEL.starting;
+
+  return (
+    <section className="rounded border bg-white p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+          <span className="text-emerald-600">●</span> WhatsApp
+        </h3>
+        <span className={`text-xs px-2 py-0.5 rounded border ${badge.cls}`}>{badge.text}</span>
+      </div>
+      <p className="text-sm text-slate-500">
+        Links a real WhatsApp number via the local sidecar (no Business API). Open WhatsApp on your
+        phone → <span className="font-medium">Settings → Linked devices → Link a device</span>, then scan the code below.
+        Sends go through the same caps + send-window as email; keep volume conservative to avoid number bans.
+      </p>
+
+      {state === "unavailable" && (
+        <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-3">
+          The WhatsApp sidecar isn’t running. The boot agent starts it automatically when online —
+          or run it manually: <code className="bg-white px-1 rounded">node whatsapp-sidecar/server.js</code>.
+        </div>
+      )}
+
+      {!connected && state !== "unavailable" && (
+        <div className="flex flex-col items-center gap-3 py-2">
+          {qr?.qr ? (
+            <img src={qr.qr} alt="WhatsApp QR" className="w-56 h-56 border rounded bg-white" />
+          ) : (
+            <div className="w-56 h-56 border rounded bg-slate-50 flex items-center justify-center text-sm text-slate-400">
+              {state === "logged_out" ? "Generating fresh QR…" : "Waiting for QR…"}
+            </div>
+          )}
+          <p className="text-xs text-slate-500">The code refreshes automatically until you scan it.</p>
+        </div>
+      )}
+
+      {connected && (
+        <div className="space-y-3">
+          <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded p-3">
+            Connected{status?.me ? ` as ${status.me.split(":")[0].split("@")[0]}` : ""}.
+            {status?.channel_id
+              ? " WhatsApp steps in your sequences will send through this number."
+              : " Create the channel below to use WhatsApp in sequences."}
+          </div>
+          {!status?.channel_id && (
+            <div className="grid grid-cols-12 gap-3 items-end text-sm">
+              <label className="col-span-6"><span className="block text-slate-600 mb-1">Display label</span>
+                <input value={label} onChange={(e) => setLabel(e.target.value)} className="w-full border rounded px-2 py-1.5" />
+              </label>
+              <label className="col-span-3"><span className="block text-slate-600 mb-1">Daily cap</span>
+                <input type="number" value={cap} onChange={(e) => setCap(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
+              </label>
+              <div className="col-span-3 flex justify-end">
+                <button
+                  disabled={createMut.isPending}
+                  onClick={() => createMut.mutate()}
+                  className="border rounded px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                >{createMut.isPending ? "Saving…" : "Create channel"}</button>
+              </div>
+            </div>
+          )}
+          <button
+            disabled={logoutMut.isPending}
+            onClick={() => { if (confirm("Disconnect this WhatsApp number? You’ll need to re-scan the QR.")) logoutMut.mutate(); }}
+            className="text-rose-600 hover:underline text-xs"
+          >{logoutMut.isPending ? "Disconnecting…" : "Disconnect / re-link a different number"}</button>
+        </div>
+      )}
+
+      {waError && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">{waError}</div>}
+    </section>
   );
 }
 
@@ -277,6 +404,8 @@ export default function Channels() {
           </div>
         )}
       </section>
+
+      <WhatsAppCard />
 
       <section className="rounded border bg-white p-6">
         <h3 className="font-semibold text-slate-800 mb-3">Saved channels</h3>

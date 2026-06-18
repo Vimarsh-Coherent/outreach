@@ -13,7 +13,7 @@
   // Content-script build marker — printed on every injection. Confirms which
   // content-script version is live from the LinkedIn tab's DevTools (the SW
   // build marker only proves the worker; this proves the page code).
-  const COHERENT_CS_BUILD = '2026-06-12-sendbtn-v29';
+  const COHERENT_CS_BUILD = '2026-06-16-sendonce-v34';
   LOG('content_linkedin.js loaded — build', COHERENT_CS_BUILD);
 
   // 45s: the DM flow alone can spend ~8s waiting for Send to enable plus the
@@ -33,6 +33,7 @@
     noteTextarea:         { primary: 'textarea[name="message"]',                     fallback: '#custom-message',               failCount: 0 },
     sendInvitationButton: { primary: 'button[aria-label="Send invitation"]',         fallback: 'button[aria-label*="Send"]',    failCount: 0 },
     messageButton:        { primary: 'button[aria-label^="Message "]',               fallback: null,                            failCount: 0 },
+    profileName:          { primary: 'main h1',                                       fallback: 'main section h1',               failCount: 0 },
     composeEditor:        { primary: 'div.msg-form__contenteditable[contenteditable="true"]', fallback: 'div[role="textbox"][contenteditable="true"]', failCount: 0 },
     sendDmButton:         { primary: 'button.msg-form__send-button',                  fallback: 'button[aria-label^="Press enter to send"]', failCount: 0 },
     connectionCard:       { primary: '[componentkey] a[href*="/in/"]',                fallback: 'main a[href*="/in/"]',          failCount: 0 },
@@ -471,11 +472,36 @@
     return [...main.querySelectorAll('button, a')].find((el) =>
       /^message$/i.test((el.innerText || '').trim())) || null;
   }
+  // The profile top-card Message control is an <a> pointing at
+  //   /messaging/compose/?...recipient=<ENCODED-URN>...screenContext=NON_SELF_PROFILE_VIEW
+  // (the URL is in data-original-url and/or href). That encoded URN (ACoAA…) is
+  // the recipient's GROUND-TRUTH id. We use it to (a) click the correct control
+  // and (b) positively identify the chat window it opens — immune to display-
+  // name confusion (a leftover "Kamalesh" window cannot carry Shivendra's URN).
+  // Discovered live 2026-06-15 from the inspected DOM.
+  function profileMessageControl() {
+    const main = document.querySelector('main') || document;
+    const urlOf = (a) => a.getAttribute('data-original-url') || a.getAttribute('href') || '';
+    const links = [...main.querySelectorAll(
+      'a[data-original-url*="/messaging/compose"], a[href*="/messaging/compose"]')];
+    // Prefer the control explicitly tagged as the profile-view compose overlay.
+    const pick = links.find((a) => /NON_SELF_PROFILE_VIEW/.test(urlOf(a)))
+      || links.find((a) => /recipient=/.test(urlOf(a)))
+      || links[0] || null;
+    if (!pick) return null;
+    const m = urlOf(pick).match(/recipient=([A-Za-z0-9_-]+)/);
+    return { el: pick, urn: m ? m[1] : '' };
+  }
   function dmNamesMatch(a, b) {
     const norm = (s) => (s || '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
     a = norm(a); b = norm(b);
     if (!a || !b) return false;          // can't determine → NO match (fail-closed)
     const at = a.split(' '), bt = b.split(' ');
+    // When BOTH sides carry a full name, require two shared tokens (first AND
+    // last) — first-token-only equality let "Aditya <anyone>" match "Aditya
+    // Jha", which is exactly the wrong-person class this guard exists to stop.
+    const overlap = at.filter((t) => t.length > 1 && bt.includes(t)).length;
+    if (at.length >= 2 && bt.length >= 2) return overlap >= 2;
     return at[0] === bt[0] || at.some((t) => t.length > 2 && bt.includes(t));
   }
   // Find the conversation window that belongs to the TARGET, matched by its OWN
@@ -494,9 +520,16 @@
     return (el?.getAttribute('alt') || '').trim();
   }
 
-  // ALL candidate recipient names in a conversation container, in priority
-  // order, own-account name excluded.
-  function conversationCandidateNames(win) {
+  // ALL candidate recipient names inside `scope`, own-account name excluded.
+  // Names sitting inside a conversation LIST row are EXCLUDED: the large
+  // centred messaging pane wraps the active thread AND the inbox list in ONE
+  // container, so list names made ANY queued target "positively match" the
+  // pane while its single composer belonged to whichever thread happened to
+  // be open — every DM funneled into one person's chat (observed live
+  // 2026-06-12, "all DMs went to one person").
+  const CONV_LIST_SEL = 'li, [role="listitem"], [class*="listitem"], '
+    + '[class*="conversation-list"], [class*="conversations-container"]';
+  function collectNamesIn(scope) {
     const own = accountOwnName();
     const out = [];
     const push = (t) => {
@@ -505,14 +538,32 @@
       if (own && dmNamesMatch(t, own)) return;       // never "match" ourselves
       if (!out.includes(t)) out.push(t);
     };
+    const inList = (el) => !!(el.closest && el.closest(CONV_LIST_SEL));
     const sel = '[class*="bubble-header"] [class*="title"], [class*="header"] [class*="title"], '
       + '.msg-overlay-bubble-header__title, [data-test-conversation-title], '
       + '.msg-entity-lockup__entity-title, h1, h2, h3';
-    win.querySelectorAll(sel).forEach((el) => push(el.innerText));
-    win.querySelectorAll('a[href*="/in/"]').forEach((a) =>
-      push(a.innerText || a.querySelector('img')?.getAttribute('alt')));
-    win.querySelectorAll('img[alt]').forEach((img) => push(img.getAttribute('alt')));
+    scope.querySelectorAll(sel).forEach((el) => { if (!inList(el)) push(el.innerText); });
+    scope.querySelectorAll('a[href*="/in/"]').forEach((a) => {
+      if (!inList(a)) push(a.innerText || a.querySelector('img')?.getAttribute('alt'));
+    });
+    scope.querySelectorAll('img[alt]').forEach((img) => { if (!inList(img)) push(img.getAttribute('alt')); });
     return out.slice(0, 8);
+  }
+
+  // Recipient names for ONE editor, resolved from its NEAREST named ancestor.
+  // Walking outward (through shadow hosts) and stopping at the FIRST ancestor
+  // that yields any name keeps the scope to this editor's own chat bubble /
+  // thread column — names from sibling threads or the inbox list can't leak in.
+  function namesNearEditor(editor) {
+    let node = editor.parentElement
+      || ((editor.getRootNode && editor.getRootNode().host) || null);
+    while (node) {
+      const names = collectNamesIn(node);
+      if (names.length) return names;
+      node = node.parentElement
+        || ((node.getRootNode && node.getRootNode().host) || null);
+    }
+    return [];
   }
   // Discover every open conversation CONTAINER by anchoring on its editor and
   // walking up to the nearest plausible wrapper. LinkedIn now renders chats in
@@ -532,12 +583,14 @@
     }
     return null;
   }
+  const CONV_EDITOR_SEL = '.msg-form__contenteditable, div[role="textbox"][contenteditable], '
+    + 'div[contenteditable], textarea[name="message"]';
+  function findConversationEditors() {
+    return deepQuerySelectorAll(CONV_EDITOR_SEL);
+  }
   function findConversationContainers() {
-    const editors = deepQuerySelectorAll(
-      '.msg-form__contenteditable, div[role="textbox"][contenteditable], '
-      + 'div[contenteditable], textarea[name="message"]');
     const containers = [];
-    for (const ed of editors) {
+    for (const ed of findConversationEditors()) {
       const c = composedClosest(ed,
         '.msg-overlay-conversation-bubble, .msg-convo-wrapper, .msg-thread, '
         + '[role="dialog"], [aria-modal="true"], aside, section')
@@ -546,35 +599,88 @@
     }
     return containers;
   }
-  function findConversationWindowFor(targetName /* , targetVanity */) {
-    // Profile links inside threads use the ENCODED vanity (ACoAA…) which never
-    // matches the readable URL, so we identify the window by its HEADER NAME.
-    // POSITIVE name match ONLY — return a container only if one of ITS OWN
-    // candidate names matches the target (own-account name excluded). There
+  // Does this conversation container belong to the recipient identified by
+  // `urn` (the encoded ACoAA… id from the profile's Message compose link)?
+  // Thread avatars / profile links inside the open chat reference the recipient
+  // by that SAME encoded vanity, so an exact URN hit is unambiguous — unlike a
+  // display name, a leftover "Kamalesh" window cannot carry Shivendra's URN.
+  function containerHasUrn(scope, urn) {
+    if (!urn || !scope) return false;
+    let hits;
+    try {
+      hits = [...scope.querySelectorAll(
+        `a[href*="${urn}"], [data-original-url*="${urn}"], [href*="${urn}"]`)];
+    } catch { return false; }
+    // CRITICAL: exclude hits inside the inbox conversation LIST. The big centred
+    // messaging pane bundles the list (which links to EVERYONE, including this
+    // target) together with the single open thread. A list hit would vouch for
+    // whatever thread happens to be open → "all DMs to one person". Only a hit
+    // in the open thread's OWN header/body (outside any list row) counts, so if
+    // the target's thread isn't actually open we get NO match and abort.
+    return hits.some((el) => !(el.closest && el.closest(CONV_LIST_SEL)));
+  }
+  function findConversationFor(targetName, targetUrn) {
+    // Identify the TARGET's own chat window, judged PER EDITOR. Two passes:
+    //   1. URN match — ground truth, immune to name confusion (Kamalesh).
+    //   2. positive NAME match — fallback when the URN isn't rendered in the DOM.
+    // Returns the matched editor itself (typing/sending uses exactly it). There
     // is deliberately NO "use the only open window" fallback: if we can't
-    // positively confirm the recipient, we abort. That makes a wrong-person
-    // send structurally impossible.
-    for (const w of findConversationContainers()) {
-      if (!targetName) continue;
-      if (conversationCandidateNames(w).some((n) => dmNamesMatch(n, targetName))) return w;
+    // positively confirm the recipient, we abort — a wrong-person send stays
+    // structurally impossible.
+    if (!targetName && !targetUrn) return null;
+    const winOf = (ed) => composedClosest(ed,
+      '.msg-overlay-conversation-bubble, .msg-convo-wrapper, .msg-thread, '
+      + '[role="dialog"], [aria-modal="true"], aside, section')
+      || ed.parentElement;
+    if (targetUrn) {
+      for (const ed of findConversationEditors()) {
+        const win = winOf(ed);
+        if (win && containerHasUrn(win, targetUrn)) {
+          return { editor: ed, win, names: namesNearEditor(ed), via: 'urn' };
+        }
+      }
+    }
+    if (targetName) {
+      for (const ed of findConversationEditors()) {
+        const names = namesNearEditor(ed);
+        if (names.some((n) => dmNamesMatch(n, targetName))) {
+          return { editor: ed, win: winOf(ed), names, via: 'name' };
+        }
+      }
     }
     return null;
   }
 
   // Resolve the profile's display name from several independent sources — the
   // whole DM flow keys off a positive name match, so an empty name used to
-  // guarantee a dm_target_window_not_found abort even when everything else
-  // worked. Sources in order of trust:
-  //   1. top-card <h1>
-  //   2. aria-label of the top-card Message / Invite controls
-  //   3. document.title ("(3) John Doe | LinkedIn")
+  // guarantee a dm_target_window_not_found / profile_dom_mismatch abort even
+  // when everything else worked. Sources in order of trust:
+  //   1. the HEALABLE 'profileName' selector (registry → AI-healed top-card h1)
+  //   2. document.title ("(3) John Doe | LinkedIn") — clean and reliable
+  //   3. aria-label of the top-card Message / Invite controls (last resort)
+  //
+  // (1) routes through the selector registry so the watchdog can heal it in
+  // real time when LinkedIn drifts (observed live: h1="none", and the old
+  // aria-scan grabbing a "with Premium" badge instead of the name). The result
+  // is always re-validated against the target slug by the caller, so a stale
+  // value is rejected rather than acted on.
   function resolveProfileName() {
-    let n = (document.querySelector('main h1')?.innerText || '').trim();
-    if (n) return n;
-    // Scope the aria-label scan to the TOP CARD (first section of main) — the
-    // "People also viewed" rails inside <main> carry "Message <other person>"
-    // buttons, and an unscoped scan resolved a RAIL person's name when the h1
-    // was missing (observed live as profile_dom_mismatch with a rail name).
+    // 1. healable profile-name element (shadow-DOM aware)
+    const reg = registry['profileName'];
+    for (const sel of [reg && reg.primary, reg && reg.fallback]) {
+      if (!sel) continue;
+      try {
+        const n = (deepQuerySelector(sel)?.innerText || '').trim();
+        if (n) return n;
+      } catch { /* invalid selector for this context */ }
+    }
+    // 2. document.title — survives top-card class obfuscation entirely
+    const t = (document.title || '').replace(/^\(\d+\)\s*/, '');
+    const tm = t.match(/^(.+?)\s*[|\-–]\s*LinkedIn/i);
+    if (tm && tm[1].trim()) return tm[1].trim();
+    // 3. aria-label of the top-card Message / Invite controls. Scope to the
+    // TOP CARD (first section of main) — the "People also viewed" rails carry
+    // "Message <other person>" buttons that an unscoped scan would mis-resolve.
     const main = document.querySelector('main section')
               || document.querySelector('main')
               || document;
@@ -584,9 +690,6 @@
         || aria.match(/^invite\s+(.+?)\s+to connect/i);
       if (m && m[1].trim()) return m[1].trim();
     }
-    const t = (document.title || '').replace(/^\(\d+\)\s*/, '');
-    const m = t.match(/^(.+?)\s*[|\-–]\s*LinkedIn/i);
-    if (m && m[1].trim()) return m[1].trim();
     return '';
   }
 
@@ -646,21 +749,33 @@
     await waitFor(() => document.querySelector('main'));
     assertOnTargetProfile(cmd);
 
+    // Clear ALL leftover floating chat windows from a PREVIOUS DM *first*. They
+    // overlay the profile top-card, so the identity check below would otherwise
+    // read the messaging UI instead of the person (observed live: shivendra
+    // failed profile_dom_mismatch with domName="Messaging" h1="none" right after
+    // aditya's DM left an overlay open). Clean the page BEFORE verifying who we're
+    // on — this is what makes back-to-back sends to many people reliable.
+    await closeAllMessageOverlays();
+    await sleep(500);
+
     // Who we must message — verified against the open conversation before
     // typing. Waits for the rendered profile to actually BE the target (URL
     // alone lies mid-transition); throws profile_dom_mismatch otherwise.
     const targetName = await waitForTargetProfileDom(cmd);
 
-    // Clear ALL leftover floating chat windows from previous DMs.
-    await closeAllMessageOverlays();
-    await sleep(500);
-
-    // Click the MAIN profile Message button (top card), never a sidebar one.
-    const msgBtn = findProfileMessageButton()
+    // Resolve the precise top-card Message control AND the recipient's encoded
+    // URN from its compose href. The URN positively identifies the chat window
+    // that opens, even if a leftover window for someone else is present.
+    const control = profileMessageControl();
+    const targetUrn = (control && control.urn) || '';
+    // Click the MAIN profile Message control (the compose <a>), never a sidebar
+    // one. Fall back to the labelled top-card button, then registry/heal.
+    const msgBtn = (control && control.el)
+      || findProfileMessageButton()
       || await waitFor(() => findResilient('messageButton', /^message$/i), COMMAND_TIMEOUT_MS);
     if (!msgBtn) throw new Error('messageButton_not_found_even_after_heal');
     msgBtn.click();
-    LOG(`Clicked Message for "${targetName}" — waiting for composer dialog…`);
+    LOG(`Clicked Message for "${targetName}" (urn=${targetUrn || 'n/a'}) — waiting for composer dialog…`);
 
     // Wait for the dialog to appear and finish animating in. LinkedIn renders
     // the "New message" composer inside #interop-outlet's open shadow DOM, so
@@ -682,52 +797,47 @@
     // else is open, we never type into or send from it. If the target's window
     // can't be found, we ABORT rather than risk messaging the wrong person.
     const targetVanity = (location.pathname.match(/\/in\/([^/?#]+)/) || [])[1] || '';
-    let win = await waitFor(
-      () => findConversationWindowFor(targetName, targetVanity), 7000,
+    let conv = await waitFor(
+      () => findConversationFor(targetName, targetUrn), 7000,
     ).catch(() => null);
-    if (!win) {
+    if (!conv) {
       // One clean in-flow retry before aborting: a leftover/minimized window
       // can swallow the first Message click (LinkedIn focuses it instead of
       // opening the target's). Nothing has been typed or sent yet, so this is
       // safe. Clear overlays again, re-click Message, wait once more.
-      LOG('Target window not found — clearing overlays and re-clicking Message…');
+      LOG('Target conversation not found — clearing overlays and re-clicking Message…');
       await closeAllMessageOverlays();
       await sleep(500);
-      const again = findProfileMessageButton();
+      const againCtl = profileMessageControl();
+      const again = (againCtl && againCtl.el) || findProfileMessageButton();
       if (again) {
         again.click();
         await sleep(1200);
         await focusComposerArea();
       }
-      win = await waitFor(
-        () => findConversationWindowFor(targetName, targetVanity), 8000,
+      conv = await waitFor(
+        () => findConversationFor(targetName, targetUrn), 8000,
       ).catch(() => null);
     }
-    if (!win) {
+    if (!conv) {
       // Embed a compact DOM-state snapshot in the error so the backend's
-      // activity log shows WHY the window wasn't found (no windows at all vs
-      // windows without editors vs name mismatch) — debuggable without
+      // activity log shows WHY the conversation wasn't found (no editors at
+      // all vs editors whose scoped names mismatch) — debuggable without
       // attaching DevTools to the LinkedIn tab.
-      const containers = findConversationContainers();
-      const eds = deepQuerySelectorAll(
-        '.msg-form__contenteditable, div[role="textbox"][contenteditable], '
-        + 'div[contenteditable], textarea[name="message"]').length;
-      const cands = containers
-        .map((w) => conversationCandidateNames(w).slice(0, 4).join('+'))
+      const editors = findConversationEditors();
+      const cands = editors
+        .map((ed) => namesNearEditor(ed).slice(0, 4).join('+') || 'unnamed')
         .join(' / ');
       const frames = document.querySelectorAll('iframe').length;
       throw new Error(
-        `dm_target_window_not_found [target="${targetName}" wins=${containers.length} `
-        + `eds=${eds} frames=${frames} scopes=${collectSearchScopes().length} `
+        `dm_target_window_not_found [target="${targetName}" urn=${targetUrn || 'n/a'} `
+        + `eds=${editors.length} frames=${frames} scopes=${collectSearchScopes().length} `
         + `cands=${cands || 'none'} own="${accountOwnName() || '?'}"]`,
       );
     }
-    LOG(`Target window confirmed for "${targetName}".`);
-
-    const editor = win.querySelector(
-      '.msg-form__contenteditable, div[role="textbox"][contenteditable], '
-      + 'div[contenteditable], textarea[name="message"], textarea');
-    if (!editor) throw new Error('composeEditor_not_found_even_after_heal');
+    const { editor, win } = conv;
+    LOG(`Target conversation confirmed for "${targetName}" (names: ${conv.names.slice(0, 3).join(', ')}).`);
+    if (!editor.isConnected) throw new Error('composeEditor_not_found_even_after_heal');
 
     // ── Text insertion (controlled-editor aware), scoped to this window ──
     editor.click();
@@ -774,7 +884,27 @@
       `btn=${sendBtn ? `"${(sendBtn.getAttribute('aria-label') || sendBtn.innerText || sendBtn.className || '?').toString().slice(0, 40)}"` : 'none'} `
       + `dis=${sendBtn ? (sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') : '-'} form=${!!form}`;
     LOG('Send state:', sendState());
-    // (a) native click + mouse-sequence click (realm-correct)
+    // ── Send EXACTLY ONCE ───────────────────────────────────────────────
+    // Each mechanism is followed by a POLL for delivery confirmation; we
+    // escalate to the next one ONLY if the message has not gone out yet.
+    // Confirmation = composer cleared OR our text now appears as a thread
+    // message. The new pane keeps the composer text rendered even AFTER a
+    // successful send, so the old `isComposerEmpty`-only guard let (b) and (c)
+    // fire as DUPLICATES — observed live: the same DM sent 4× to one person.
+    const sentYet = () =>
+      !editor.isConnected || !win.isConnected
+      || isComposerEmpty(editor) || dmAppearsSent(win, editor, cmd.body_text);
+    const confirmSent = async (ms) => {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        if (sentYet()) return true;
+        await sleep(250);
+      }
+      return sentYet();
+    };
+    const SENT = () => ({ providerMessageId: `li-dm:${targetVanity}#${Date.now()}` });
+
+    // (a) native click + realm-correct mouse sequence
     if (sendBtn) {
       try {
         sendBtn.click();
@@ -783,31 +913,43 @@
         LOG('Clicked Send (native + mouse sequence).');
       } catch (e) { WARN('Send click failed:', e?.message || e); }
     }
-    await sleep(800);
-    // (b) form.requestSubmit() — the button is <button type="submit"> in <form.msg-form>
-    if (editor.isConnected && !isComposerEmpty(editor) && form && typeof form.requestSubmit === 'function') {
+    if (await confirmSent(3500)) { LOG('Send confirmed after click — NOT escalating.'); return SENT(); }
+
+    // (b) form.requestSubmit() — only because (a) did NOT deliver
+    if (form && typeof form.requestSubmit === 'function') {
       try { form.requestSubmit(sendBtn && sendBtn.type === 'submit' ? sendBtn : undefined); LOG('Send via form.requestSubmit().'); }
       catch (e) { /* fall through */ }
-      await sleep(700);
     }
-    // (c) Enter-to-send (realm-correct)
-    if (editor.isConnected && !isComposerEmpty(editor)) {
-      try {
-        editor.focus();
-        const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
-        editor.dispatchEvent(new EW.KeyboardEvent('keydown', opts));
-        editor.dispatchEvent(new EW.KeyboardEvent('keyup', opts));
-        LOG('Tried Enter-to-send.');
-      } catch (e) { /* best-effort */ }
-    }
+    if (await confirmSent(3000)) { LOG('Send confirmed after requestSubmit.'); return SENT(); }
 
-    // ── Post-send verification ──────────────────────────────────────────
-    await sleep(1500);
-    if (!editor.isConnected || !win.isConnected || isComposerEmpty(editor)) {
-      LOG('Send confirmed (composer cleared/detached).');
-      return { providerMessageId: `li-dm:${targetVanity}#${Date.now()}` };
-    }
+    // (c) Enter-to-send — only because (a) and (b) did NOT deliver
+    try {
+      editor.focus();
+      const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+      editor.dispatchEvent(new EW.KeyboardEvent('keydown', opts));
+      editor.dispatchEvent(new EW.KeyboardEvent('keyup', opts));
+      LOG('Tried Enter-to-send.');
+    } catch (e) { /* best-effort */ }
+    if (await confirmSent(3000)) { LOG('Send confirmed after Enter.'); return SENT(); }
+
     throw new Error(`send_click_was_noop_composer_still_has_text [${sendState()}]`);
+  }
+
+  // TRUE iff `body` appears as message CONTENT in this conversation, outside
+  // the compose form. Guards the FAILURE path only: a send that worked but
+  // left the composer text rendered must not be reported failed — the
+  // watchdog's fragility retry would send the same DM again.
+  function dmAppearsSent(win, editor, body) {
+    const probe = (body || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (probe.length < 8) return false;
+    const form = composedClosest(editor, 'form, .msg-form');
+    for (const el of win.querySelectorAll('p, span, [class*="event"], [class*="message"]')) {
+      if (el.contains(editor) || editor.contains(el)) continue;
+      if (form && (form.contains(el) || el.contains(form))) continue;
+      const t = (el.innerText || '').replace(/\s+/g, ' ');
+      if (t.includes(probe)) return true;
+    }
+    return false;
   }
 
   // ── Connect: locate the REAL profile connect control ────────────────────
@@ -1077,8 +1219,8 @@
     send_click_was_noop_composer_still_has_text: 'sendDmButton',
     messageButton_not_found_even_after_heal: 'messageButton',
     dm_target_window_not_found: 'messageButton',
-    dm_target_name_unresolved: 'messageButton',
-    profile_dom_mismatch: 'messageButton',
+    dm_target_name_unresolved: 'profileName',
+    profile_dom_mismatch: 'profileName',
     connectButton_not_found_even_after_heal: 'connectButton',
     addNoteButton_not_found_even_after_heal: 'addNoteButton',
     noteTextarea_not_found_even_after_heal: 'noteTextarea',
@@ -1147,10 +1289,15 @@
           throw err;
         }
 
-        // Navigation-class errors (wrong page / stale DOM) can't be fixed by
-        // selector healing — the selectors are fine, the PAGE is wrong. Skip
-        // the doomed heal API call; just let the page settle and retry.
-        if (msg.includes('profile_dom_mismatch') || msg.includes('wrong_profile_page')) {
+        // wrong_profile_page = the address bar is on a DIFFERENT person than the
+        // command targets. That's a genuine navigation fault — the selectors are
+        // fine, the PAGE is wrong — so healing is doomed; just settle and retry.
+        // NOTE: profile_dom_mismatch is deliberately NOT here. By the time it
+        // throws, assertOnTargetProfile has already confirmed the URL matches the
+        // target, so the page is RIGHT and it's the name SELECTOR that broke
+        // (observed live: h1="none"). That IS healable → fall through to the
+        // heal path below (intent 'profileName') so the watchdog fixes it live.
+        if (msg.includes('wrong_profile_page')) {
           LOG(`Attempt ${attempt} failed on page identity — retrying after settle (no heal)…`);
           await dismissOpenDialog();
           await sleep(2500);
@@ -1233,22 +1380,26 @@
         else if (cmd.command_type === 'connect') result = await executeWithSelfHeal(cmd, executeConnect);
         else throw new Error(`unknown_command_type:${cmd.command_type}`);
 
+        // Build fingerprint appended to every result: lets the backend prove
+        // WHICH content-script version executed a command (the page console is
+        // the only other place the marker shows, and nobody is watching it).
         chrome.runtime.sendMessage({
           kind: 'command-result',
           cmdId: cmd.id,
           status: 'done',
-          providerMessageId: result.providerMessageId,
+          providerMessageId: `${result.providerMessageId}|${COHERENT_CS_BUILD}`,
         });
         sendResponse({ ok: true });
       } catch (e) {
         WARN('execute failed:', e);
+        const errMsg = `${String(e && e.message ? e.message : e)} [cs=${COHERENT_CS_BUILD}]`;
         chrome.runtime.sendMessage({
           kind: 'command-result',
           cmdId: cmd.id,
           status: 'failed',
-          error: String(e && e.message ? e.message : e),
+          error: errMsg,
         });
-        sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+        sendResponse({ ok: false, error: errMsg });
       }
     })();
     return true;  // async sendResponse

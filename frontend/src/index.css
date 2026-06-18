@@ -1,5 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+@layer base {
+  body {
+    @apply font-sans text-slate-600 bg-slate-50 antialiased;
+  }
+  h1, h2, h3, h4 { @apply text-slate-900; }
+}
+
+/* Reusable production-grade primitives — keeps page markup clean + consistent. */
+@layer components {
+  .card        { @apply rounded-xl border border-slate-200 bg-white shadow-card; }
+  .card-pad    { @apply p-5; }
+  .card-head   { @apply px-5 py-4 border-b border-slate-100 flex items-center justify-between; }
+
+  .btn         { @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed; }
+  .btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700 disabled:bg-slate-300 disabled:text-slate-100; }
+  .btn-ghost   { @apply btn border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300; }
+  .btn-sm      { @apply px-2.5 py-1.5 text-xs; }
+
+  .badge       { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium; }
+  .badge-green { @apply badge bg-emerald-50 text-emerald-700; }
+  .badge-amber { @apply badge bg-amber-50 text-amber-700; }
+  .badge-rose  { @apply badge bg-rose-50 text-rose-700; }
+  .badge-slate { @apply badge bg-slate-100 text-slate-600; }
+  .badge-brand { @apply badge bg-brand-50 text-brand-700; }
+
+  .input       { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100; }
+  .label       { @apply block text-xs font-medium text-slate-500 mb-1; }
+
+  .page-title  { @apply text-2xl font-semibold tracking-tight text-slate-900; }
+  .stat-label  { @apply text-[11px] font-semibold uppercase tracking-wider text-slate-400; }
+
+  .th          { @apply text-left text-xs font-semibold uppercase tracking-wide text-slate-400 py-2.5 px-3; }
+  .td          { @apply py-3 px-3 text-sm text-slate-700; }
+}

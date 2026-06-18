@@ -32,12 +32,13 @@ const SENTIMENT_COLORS: Record<string, string> = {
   auto_reply: "#cbd5e1",
 };
 
-function KPI({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: string }) {
+function KPI({ label, value, sub, accent, bar }: { label: string; value: string; sub?: string; accent?: string; bar?: string }) {
   return (
-    <div className="rounded border bg-white p-4">
-      <div className="text-xs text-slate-500 uppercase tracking-wide">{label}</div>
-      <div className={`text-3xl font-semibold mt-1 ${accent ?? ""}`}>{value}</div>
-      {sub && <div className="text-xs text-slate-500 mt-1">{sub}</div>}
+    <div className="card card-pad relative overflow-hidden">
+      {bar && <div className={`absolute left-0 top-0 h-full w-1 ${bar}`} />}
+      <div className="stat-label">{label}</div>
+      <div className={`text-3xl font-semibold mt-2 tracking-tight ${accent ?? "text-slate-900"}`}>{value}</div>
+      {sub && <div className="text-xs text-slate-400 mt-1">{sub}</div>}
     </div>
   );
 }
@@ -76,22 +77,25 @@ export default function Dashboard() {
   return (
     <div className="space-y-6 max-w-7xl">
       <div className="flex items-end justify-between">
-        <h2 className="text-2xl font-semibold">Dashboard</h2>
-        {summary && <div className="text-xs text-slate-500">Last {summary.period_days} days</div>}
+        <div>
+          <h2 className="page-title">Dashboard</h2>
+          <p className="text-sm text-slate-500 mt-1">Pipeline health across email + LinkedIn outreach.</p>
+        </div>
+        {summary && <div className="badge-slate">Last {summary.period_days} days</div>}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        <KPI label="Enrolled"      value={String(summary?.enrolled ?? "—")} />
-        <KPI label="Contacted"     value={String(summary?.contacted ?? "—")} />
-        <KPI label="Replied"       value={String(summary?.replied ?? "—")} sub={summary ? `${pct(summary.reply_rate)} reply rate` : ""} />
-        <KPI label="Positive"      value={String(summary?.positive_replies ?? "—")} sub={summary ? `${pct(summary.positive_rate)} of replies` : ""} accent="text-emerald-700" />
-        <KPI label="Bounced"       value={String(summary?.bounced ?? "—")} accent="text-rose-700" />
-        <KPI label="Unsubscribed"  value={String(summary?.unsubscribed ?? "—")} accent="text-violet-700" />
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+        <KPI label="Enrolled"      value={String(summary?.enrolled ?? "—")} bar="bg-brand-500" />
+        <KPI label="Contacted"     value={String(summary?.contacted ?? "—")} bar="bg-sky-500" />
+        <KPI label="Replied"       value={String(summary?.replied ?? "—")} sub={summary ? `${pct(summary.reply_rate)} reply rate` : ""} bar="bg-indigo-500" />
+        <KPI label="Positive"      value={String(summary?.positive_replies ?? "—")} sub={summary ? `${pct(summary.positive_rate)} of replies` : ""} accent="text-emerald-600" bar="bg-emerald-500" />
+        <KPI label="Bounced"       value={String(summary?.bounced ?? "—")} accent="text-rose-600" bar="bg-rose-500" />
+        <KPI label="Unsubscribed"  value={String(summary?.unsubscribed ?? "—")} accent="text-violet-600" bar="bg-violet-500" />
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
-        <section className="rounded border bg-white p-4">
-          <h3 className="font-semibold text-slate-800 mb-3">Funnel — last 30d</h3>
+        <section className="card card-pad">
+          <h3 className="font-semibold text-slate-900 mb-4">Funnel — last 30d</h3>
           {funnel.every(f => f.value === 0) ? (
             <p className="text-sm text-slate-500">No outreach activity in the last 30 days.</p>
           ) : (
@@ -109,8 +113,8 @@ export default function Dashboard() {
           )}
         </section>
 
-        <section className="rounded border bg-white p-4">
-          <h3 className="font-semibold text-slate-800 mb-3">Reply sentiment — last 30d</h3>
+        <section className="card card-pad">
+          <h3 className="font-semibold text-slate-900 mb-4">Reply sentiment — last 30d</h3>
           {chartData.length === 0 ? (
             <p className="text-sm text-slate-500">No classified replies yet. Once replies come in they'll appear here, color-coded by sentiment label.</p>
           ) : (
@@ -130,8 +134,8 @@ export default function Dashboard() {
         </section>
       </div>
 
-      <section className="rounded border bg-white p-4">
-        <h3 className="font-semibold text-slate-800 mb-3">Top sequences</h3>
+      <section className="card card-pad">
+        <h3 className="font-semibold text-slate-900 mb-4">Top sequences</h3>
         {!sequences?.length ? (
           <p className="text-sm text-slate-500">No sequences yet. <Link to="/sequences" className="text-sky-600 underline">Create one</Link>.</p>
         ) : (
@@ -165,8 +169,8 @@ export default function Dashboard() {
       </section>
 
       <div className="grid md:grid-cols-2 gap-4">
-        <section className="rounded border bg-white p-4">
-          <h3 className="font-semibold text-slate-800 mb-3">Hot leads — last 7d</h3>
+        <section className="card card-pad">
+          <h3 className="font-semibold text-slate-900 mb-4">Hot leads — last 7d</h3>
           {!hotLeads?.length ? (
             <p className="text-sm text-slate-500">No hot leads yet. As replies are classified `positive` or `interested`, they'll surface here.</p>
           ) : (
@@ -192,8 +196,8 @@ export default function Dashboard() {
           )}
         </section>
 
-        <section className="rounded border bg-white p-4">
-          <h3 className="font-semibold text-slate-800 mb-3">At-risk enrolments</h3>
+        <section className="card card-pad">
+          <h3 className="font-semibold text-slate-900 mb-4">At-risk enrolments</h3>
           {!atRisk?.length ? (
             <p className="text-sm text-slate-500">No stuck or errored enrolments.</p>
           ) : (

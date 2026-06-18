@@ -89,9 +89,11 @@ export default function SequenceGenerate() {
         document_ids: indexedIds.length ? indexedIds : undefined,
       });
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["sequences"] });
-      navigate("/sequences");
+      // Land in the editor (step list + flow + document-grounding chips) so the
+      // user can review/edit the freshly generated, grounded sequence.
+      navigate(`/sequences/${data.sequence.id}`);
     },
     onError: (err) => setError(extractError(err)),
   });

@@ -16,6 +16,7 @@ from outreach.api import (
     routes_sequences,
     routes_timeline,
     routes_watchdog,
+    routes_whatsapp,
 )
 from outreach.config import get_settings
 from outreach.workers import scheduler
@@ -64,3 +65,4 @@ app.include_router(routes_dashboard.router)
 app.include_router(routes_followups.router)
 app.include_router(routes_extension.router)
 app.include_router(routes_watchdog.router)
+app.include_router(routes_whatsapp.router)

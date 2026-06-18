@@ -19,7 +19,7 @@ class Channel(Base, TimestampMixin):
     __tablename__ = "channels"
     __table_args__ = (
         CheckConstraint(
-            "channel_type IN ('email','linkedin')", name="ck_channels_type"
+            "channel_type IN ('email','linkedin','whatsapp')", name="ck_channels_type"
         ),
         CheckConstraint(
             "status IN ('active','paused','invalid')", name="ck_channels_status"

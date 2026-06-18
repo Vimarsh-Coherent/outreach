@@ -1,0 +1,14 @@
+{
+  "start_backend": true,
+  "backend_host": "127.0.0.1",
+  "backend_port": 8000,
+  "linkedin_url": "https://www.linkedin.com/feed/",
+  "dedicated_profile": false,
+  "chrome_profile_directory": "Default",
+  "chrome_path": "",
+  "start_whatsapp_sidecar": true,
+  "whatsapp_port": 8085,
+  "whatsapp_api_key": "",
+  "node_path": "",
+  "check_interval_seconds": 30
+}

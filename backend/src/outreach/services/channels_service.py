@@ -2,7 +2,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach.models.channel import Channel
-from outreach.schemas.channels import ChannelOut, EmailChannelCreate
+from outreach.schemas.channels import (
+    ChannelOut,
+    EmailChannelCreate,
+    WhatsAppChannelCreate,
+)
 from outreach.schemas.extension import LinkedInChannelCreate, LinkedInChannelCreated
 from outreach.utils.crypto import (
     decrypt_json,
@@ -87,6 +91,46 @@ async def create_linkedin_channel(
         id=channel.id, display_label=channel.display_label,
         daily_cap=channel.daily_cap, raw_token=raw_token,
     )
+
+
+async def get_whatsapp_channel(session: AsyncSession, user_id: int) -> Channel | None:
+    return await session.scalar(
+        select(Channel)
+        .where(Channel.user_id == user_id, Channel.channel_type == "whatsapp")
+        .order_by(Channel.id.desc())
+        .limit(1)
+    )
+
+
+async def create_whatsapp_channel(
+    session: AsyncSession, user_id: int, dto: WhatsAppChannelCreate
+) -> ChannelOut:
+    """Create (or return the existing) WhatsApp channel for this user.
+
+    The real WhatsApp session lives in the Baileys sidecar; this Channel row is
+    the platform-side handle used for daily-cap accounting + activation guards.
+    Idempotent: one WhatsApp number per user, so a second call just relabels.
+    """
+    existing = await get_whatsapp_channel(session, user_id)
+    if existing is not None:
+        existing.display_label = dto.display_label
+        existing.daily_cap = dto.daily_cap
+        existing.status = "active"
+        await session.commit()
+        return next(c for c in await list_channels(session, user_id) if c.id == existing.id)
+
+    channel = Channel(
+        user_id=user_id,
+        channel_type="whatsapp",
+        display_label=dto.display_label,
+        config_encrypted=encrypt_json({"whatsapp": {"session": "default"}}),
+        status="active",
+        daily_cap=dto.daily_cap,
+    )
+    session.add(channel)
+    await session.commit()
+    await session.refresh(channel)
+    return next(c for c in await list_channels(session, user_id) if c.id == channel.id)
 
 
 async def delete_channel(session: AsyncSession, user_id: int, channel_id: int) -> bool:

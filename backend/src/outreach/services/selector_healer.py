@@ -74,6 +74,14 @@ INTENT_DESCRIPTIONS: dict[str, str] = {
         "(under OPEN_DIALOG). Its label varies: 'Send without a note' (no-note "
         "flow), 'Send invitation', 'Send now', or 'Send'. Match the aria-label; do "
         "NOT return the 'Add a note' or 'Dismiss' buttons.",
+    "profileName":
+        "The element on a LinkedIn profile top-card that holds the member's full "
+        "display name (e.g. 'Aditya Narayan Jha') as visible TEXT. Usually the "
+        "top-card <h1>, but the class is obfuscated and the <h1> sometimes "
+        "disappears. Return a selector whose .innerText is exactly the person's "
+        "name. MUST be scoped to the profile top card / main header — NEVER match "
+        "names in the 'People you may know' / 'People also viewed' rails, and "
+        "never a 'with Premium' badge or a button aria-label.",
     "messageButton":
         "The 'Message' button on a LinkedIn profile that opens the DM composer. "
         "May be a <button> or <a>.",

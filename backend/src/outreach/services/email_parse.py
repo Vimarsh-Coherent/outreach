@@ -45,6 +45,9 @@ class ParsedInbound:
     received_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     bounce_detail: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    # Which channel this inbound arrived on — tags the resulting Event. Defaults
+    # to email (the IMAP poller path); the WhatsApp webhook sets "whatsapp".
+    channel: str = "email"
 
 
 def _flatten_headers(msg: Message) -> dict[str, str]:

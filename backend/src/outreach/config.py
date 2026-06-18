@@ -25,8 +25,26 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
+    # DeepSeek (OpenAI-compatible). When deepseek_api_key is set, the AI sequence
+    # generator uses DeepSeek instead of Anthropic — cheap, and not subject to the
+    # Anthropic account usage cap.
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+
+    # WhatsApp (Baileys sidecar). The sidecar drives a logged-in WhatsApp number
+    # over the multi-device protocol and exposes a small REST API; wa_api_url is
+    # where the backend reaches it, wa_api_key is the shared secret. Sends flow
+    # through the existing send-window + jitter + daily-cap machinery — keep the
+    # cap conservative: this is the unofficial Web protocol, so high volume risks
+    # number bans. The boot agent manages the sidecar process (industrial mode).
+    wa_api_url: str = "http://127.0.0.1:8085"
+    wa_api_key: str = ""
+    wa_timeout_seconds: int = 20
+    whatsapp_daily_cap: int = 100
+
     # Strip stray whitespace from pasted API keys (common copy-paste issue).
-    @field_validator("anthropic_api_key", "openai_api_key", mode="before")
+    @field_validator("anthropic_api_key", "openai_api_key", "deepseek_api_key", mode="before")
     @classmethod
     def _strip_api_keys(cls, v: object) -> object:
         return v.strip() if isinstance(v, str) else v
@@ -36,6 +54,17 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_local_path: str = "data/qdrant"
     embedding_dim: int = 1536
+
+    # Send-time per-lead personalization (Phase 3). Cheap, high-volume → Haiku.
+    # Fail-open: any AI error/timeout → the plain rendered template is sent.
+    personalize_model: str = "claude-haiku-4-5-20251001"
+    personalize_timeout_seconds: int = 10
+    # AI sequence generator (Sequences page → "Generate with AI"). Same cheap
+    # model; this is a one-shot interactive call so it gets a longer timeout.
+    sequence_gen_timeout_seconds: int = 40
+    # When true, LinkedIn connect/DM bodies are personalized even if a step's
+    # config doesn't set ai_personalize — lets manual sequences benefit too.
+    ai_personalize_linkedin_default: bool = True
 
     vault_storage_dir: str = "../data/vectorvault"
     vault_local: bool = True
@@ -57,7 +86,7 @@ class Settings(BaseSettings):
     jitter_max_ms: int = 300_000
 
     li_daily_cap_connect: int = 20
-    li_daily_cap_dm: int = 25
+    li_daily_cap_dm: int = 50  # bumped from 25 for testing (rolling 24h window)
     email_daily_cap: int = 200
 
     # Connect → wait-for-acceptance → DM gate: how long to wait for a sent

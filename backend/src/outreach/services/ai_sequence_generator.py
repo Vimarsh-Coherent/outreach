@@ -1,14 +1,10 @@
 """AI-powered sequence generation from knowledge base + user prompt."""
 from __future__ import annotations
 
-import json
 import logging
-import re
 from datetime import time
 from uuid import uuid4
 
-import httpx
-from anthropic import AsyncAnthropic
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +17,7 @@ from outreach.schemas.ai_sequences import (
     AISequenceGenerateRequest,
 )
 from outreach.schemas.sequences import SequenceCreate, SequenceDetail
-from outreach.services import sequences_service, vault
+from outreach.services import llm_client, sequences_service, vault
 from outreach.services.knowledge_ingest import extract_and_chunk
 
 log = logging.getLogger("outreach.ai_sequence")
@@ -113,13 +109,10 @@ Return JSON for this step only:
 
 
 def _parse_json(text: str) -> dict | None:
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    # Full-sequence responses have "steps"; single-step regenerations have
+    # "channel"/"body". prefer_keys=("steps",) grabs the sequence object when one
+    # is present and otherwise falls back to the first valid object (the step).
+    return llm_client.extract_json_object(text, prefer_keys=("steps",))
 
 
 def _parse_time(value: str) -> time:
@@ -199,9 +192,8 @@ async def generate_draft(
     dto: AISequenceGenerateRequest,
 ) -> tuple[AISequenceDraft, int]:
     get_settings.cache_clear()
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise HTTPException(503, "ANTHROPIC_API_KEY not configured")
+    if llm_client.active_provider() is None:
+        raise HTTPException(503, "No LLM API key configured (set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY)")
 
     snippets: list[str] = []
     if dto.knowledge_id:
@@ -213,13 +205,9 @@ async def generate_draft(
         knowledge_context=knowledge_context,
     )
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     try:
-        response = await client.messages.create(
-            model=DEFAULT_MODEL,
-            max_tokens=4096,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
+        result = await llm_client.complete(
+            system=SYSTEM_PROMPT, user=user_msg, max_tokens=4096, anthropic_model=DEFAULT_MODEL,
         )
     except Exception as e:  # noqa: BLE001
         log.exception("AI sequence generation failed")
@@ -227,13 +215,12 @@ async def generate_draft(
         if "authentication" in msg.lower() or type(e).__name__ == "AuthenticationError":
             raise HTTPException(
                 502,
-                "AI generation failed: invalid Anthropic API key. "
-                "Update ANTHROPIC_API_KEY in backend/.env and restart the backend.",
+                "AI generation failed: invalid API key. "
+                "Update DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY) in backend/.env and restart the backend.",
             ) from e
         raise HTTPException(502, f"AI generation failed: {msg}") from e
 
-    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    payload = _parse_json(text)
+    payload = _parse_json(result.text)
     if not payload:
         raise HTTPException(502, "AI returned invalid JSON")
     return _draft_from_payload(payload), len(snippets)
@@ -317,9 +304,8 @@ async def regenerate_step(
     user_prompt: str | None,
 ) -> SequenceDetail:
     get_settings.cache_clear()
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise HTTPException(503, "ANTHROPIC_API_KEY not configured")
+    if llm_client.active_provider() is None:
+        raise HTTPException(503, "No LLM API key configured (set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY)")
 
     detail = await sequences_service.get_sequence_detail(session, user_id, sequence_id)
     step = next((s for s in detail.steps if s.id == step_id), None)
@@ -349,15 +335,14 @@ async def regenerate_step(
         user_prompt=user_prompt or "(regenerate with best-practice improvements)",
     )
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-    response = await client.messages.create(
-        model=DEFAULT_MODEL,
-        max_tokens=1200,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    payload = _parse_json(text)
+    try:
+        result = await llm_client.complete(
+            system=SYSTEM_PROMPT, user=user_msg, max_tokens=1200, anthropic_model=DEFAULT_MODEL,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.exception("AI step regeneration failed")
+        raise HTTPException(502, f"AI regeneration failed: {str(e).strip() or type(e).__name__}") from e
+    payload = _parse_json(result.text)
     if not payload:
         raise HTTPException(502, "AI returned invalid JSON for step regeneration")
 

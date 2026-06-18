@@ -13,23 +13,18 @@ Used in two modes:
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
 from dataclasses import dataclass
 
-import httpx
-from anthropic import AsyncAnthropic
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from outreach.config import get_settings
 from outreach.models.event import Event, ReplySentiment
 from outreach.models.lead import Lead
 from outreach.models.sequence import Sequence
 from outreach.models.step import SequenceStep
 from outreach.models.step_run import StepRun
-from outreach.services import vault
+from outreach.services import llm_client, vault
 from outreach.services.template_render import render
 
 log = logging.getLogger("outreach.followup")
@@ -89,13 +84,7 @@ class FollowUpDraft:
 
 
 def _parse_json(text: str) -> dict | None:
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    return llm_client.extract_json_object(text, prefer_keys=("body",))
 
 
 async def _load_prior_history(session: AsyncSession, lead_id: int, n: int = 5) -> tuple[list[str], int]:
@@ -157,8 +146,6 @@ async def draft_for_lead(
     contact_snapshot: dict | None = None,
     model: str = DEFAULT_MODEL,
 ) -> FollowUpDraft:
-    settings = get_settings()
-
     lead = await session.scalar(select(Lead).where(Lead.id == lead_id))
     if lead is None:
         raise ValueError(f"lead {lead_id} not found")
@@ -197,11 +184,11 @@ async def draft_for_lead(
         template_body=rendered_template_body,
     )
 
-    if not settings.anthropic_api_key:
+    if llm_client.active_provider() is None:
         return FollowUpDraft(
             subject=rendered_template_subject,
             body=rendered_template_body,
-            notes="ANTHROPIC_API_KEY not set — returned template unchanged.",
+            notes="No LLM API key set — returned template unchanged.",
             template_subject=rendered_template_subject,
             template_body=rendered_template_body,
             similar_snippets=similar,
@@ -209,15 +196,11 @@ async def draft_for_lead(
             model="fallback",
         )
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     try:
-        response = await client.messages.create(
-            model=model,
-            max_tokens=600,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user}],
+        result = await llm_client.complete(
+            system=SYSTEM_PROMPT, user=user, max_tokens=600, anthropic_model=model,
         )
-    except (httpx.HTTPError, Exception) as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         log.warning("followup draft call failed: %s", e)
         return FollowUpDraft(
             subject=rendered_template_subject,
@@ -229,8 +212,7 @@ async def draft_for_lead(
             prior_history_count=prior_count,
             model="fallback",
         )
-    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    payload = _parse_json(text) or {}
+    payload = _parse_json(result.text) or {}
     return FollowUpDraft(
         subject=str(payload.get("subject") or rendered_template_subject)[:250],
         body=str(payload.get("body") or rendered_template_body),
@@ -239,5 +221,5 @@ async def draft_for_lead(
         template_body=rendered_template_body,
         similar_snippets=similar,
         prior_history_count=prior_count,
-        model=model,
+        model=result.model or model,
     )

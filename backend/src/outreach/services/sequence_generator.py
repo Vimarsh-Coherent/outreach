@@ -1,13 +1,16 @@
 """Generate a draft outreach sequence from a natural-language prompt via Claude."""
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Any
 
 import httpx
-from anthropic import AsyncAnthropic, AuthenticationError
+from anthropic import (
+    AsyncAnthropic,
+    AuthenticationError,
+    BadRequestError,
+    RateLimitError,
+)
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,15 +26,16 @@ from outreach.schemas.sequences import (
     SequenceCreate,
     SequenceDetail,
     StepCreate,
+    WhatsAppStepCreate,
 )
-from outreach.services import document_ingest, rag_retriever, sequences_service
+from outreach.services import document_ingest, llm_client, rag_retriever, sequences_service
 from outreach.services.qdrant_store import RetrievedChunk
 from outreach.services.template_render import SUPPORTED_TOKENS, _TOKEN_RE
 
 log = logging.getLogger("outreach.sequence_generator")
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-ALL_CHANNELS = ("email", "linkedin_dm", "linkedin_connect")
+ALL_CHANNELS = ("email", "linkedin_dm", "linkedin_connect", "whatsapp")
 MAX_STEPS = 8
 
 SYSTEM_PROMPT = (
@@ -83,6 +87,7 @@ CONSTRAINTS:
 - email: subject required (max 250 chars), body max 16000 chars
 - linkedin_connect: no subject, body max 300 chars (connection note)
 - linkedin_dm: no subject, body max 8000 chars
+- whatsapp: no subject, body max 4000 chars (short, conversational, no links/markdown)
 - delay_days: 0-365, delay_hours: 0-23
 - Use realistic spacing between steps based on the user's request
 - CHANNEL MIX: use the channels the user asks for. If the request mentions LinkedIn (a connection request / connect note or a LinkedIn DM), you MUST include those step types — do not silently turn everything into email. A "mixed" sequence should combine email and LinkedIn steps.
@@ -95,7 +100,7 @@ Return JSON only:
   "description": "one-line summary of the sequence goal",
   "steps": [
     {{
-      "channel": "email | linkedin_dm | linkedin_connect",
+      "channel": "email | linkedin_dm | linkedin_connect | whatsapp",
       "delay_days": 0,
       "delay_hours": 0,
       "subject": "string or null (email only)",
@@ -107,13 +112,10 @@ Return JSON only:
 
 
 def _parse_json(text: str) -> dict | None:
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    # Robust extraction: tolerate markdown fences, preamble/trailing prose, and
+    # stray {{token}} braces the model adds around the JSON. prefer_keys ensures
+    # we pick the real sequence object (the one with "steps"), not a wrapper.
+    return llm_client.extract_json_object(text, prefer_keys=("steps",))
 
 
 def _scan_tokens(text: str) -> set[str]:
@@ -135,6 +137,8 @@ async def _connected_channels(session: AsyncSession, user_id: int) -> set[str]:
         elif ct == "linkedin":
             out.add("linkedin_dm")
             out.add("linkedin_connect")
+        elif ct == "whatsapp":
+            out.add("whatsapp")
     return out
 
 
@@ -195,6 +199,11 @@ def _validate_plan(
                 warnings.append(f"step {i}: linkedin_dm subject ignored")
             if len(body) > 8000:
                 violations.append(f"step {i}: linkedin_dm body exceeds 8000 chars")
+        elif channel == "whatsapp":
+            if subject is not None and str(subject).strip():
+                warnings.append(f"step {i}: whatsapp subject ignored")
+            if len(body) > 4000:
+                violations.append(f"step {i}: whatsapp body exceeds 4000 chars")
 
         for text in filter(None, [subject, body]):
             unknown = _scan_tokens(str(text)) - allowed_token_set
@@ -228,6 +237,8 @@ def _to_step_create(raw: dict, step_order: int) -> StepCreate:
         )
     if channel == "linkedin_dm":
         return LinkedInDmStepCreate(channel="linkedin_dm", body=body, **base)
+    if channel == "whatsapp":
+        return WhatsAppStepCreate(channel="whatsapp", body=body, **base)
     return LinkedInConnectStepCreate(channel="linkedin_connect", body=body, **base)
 
 
@@ -254,6 +265,104 @@ def _rag_grounding_warnings(chunks: list[RetrievedChunk], had_doc_ids: bool) -> 
     return []
 
 
+def _anthropic_error_message(e: Exception) -> str:
+    """Pull Anthropic's human-readable message out of an SDK exception.
+
+    The API returns ``{"error": {"message": "..."}}`` in the response body; the
+    old handler discarded it and showed only the exception *type* (e.g. the
+    useless "BadRequestError"), hiding the real reason — e.g. an account usage
+    cap with a regain date. Falls back to ``.message`` then ``str(e)``.
+    """
+    body = getattr(e, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])
+    msg = getattr(e, "message", None)
+    return str(msg) if msg else str(e)
+
+
+def _is_usage_or_rate_limit(e: Exception, message: str) -> bool:
+    if isinstance(e, RateLimitError):
+        return True
+    low = message.lower()
+    return any(s in low for s in ("usage limit", "regain access", "rate limit", "quota", "credit"))
+
+
+async def _anthropic_complete(settings, user_msg: str) -> str:
+    """Call Claude (messages API). Returns the text; raises HTTPException with the
+    real reason on failure (auth/usage-limit/bad-request/unexpected)."""
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key.strip())
+    try:
+        response = await client.messages.create(
+            model=DEFAULT_MODEL,
+            max_tokens=4000,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+    except AuthenticationError as e:
+        log.warning("sequence generate auth failed: %s", e)
+        raise HTTPException(
+            401,
+            "Anthropic API key rejected (invalid or expired). "
+            "Update ANTHROPIC_API_KEY in backend/.env with a valid key from console.anthropic.com, then restart the backend.",
+        ) from e
+    except (RateLimitError, BadRequestError) as e:
+        msg = _anthropic_error_message(e)
+        if _is_usage_or_rate_limit(e, msg):
+            log.warning("sequence generate blocked by usage/rate limit: %s", msg)
+            raise HTTPException(429, f"AI temporarily unavailable — {msg}") from e
+        log.warning("sequence generate rejected (400): %s", msg)
+        raise HTTPException(400, f"AI request rejected: {msg}") from e
+    except (httpx.HTTPError, Exception) as e:  # noqa: BLE001
+        log.warning("sequence generate LLM call failed: %s", e)
+        raise HTTPException(502, f"LLM call failed: {_anthropic_error_message(e)}") from e
+    return "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
+
+
+async def _deepseek_complete(settings, user_msg: str) -> str:
+    """Call DeepSeek (OpenAI-compatible chat API). Returns the text; raises
+    HTTPException with the real reason on failure. Same error semantics as the
+    Anthropic path so the UI behaves identically regardless of provider."""
+    from openai import (
+        AsyncOpenAI,
+        AuthenticationError as OpenAIAuthError,
+        BadRequestError as OpenAIBadRequest,
+        RateLimitError as OpenAIRateLimit,
+    )
+
+    client = AsyncOpenAI(
+        api_key=settings.deepseek_api_key.strip(),
+        base_url=settings.deepseek_base_url,
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.deepseek_model,
+            max_tokens=4000,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+        )
+    except OpenAIAuthError as e:
+        log.warning("deepseek auth failed: %s", e)
+        raise HTTPException(
+            401,
+            "DeepSeek API key rejected — update DEEPSEEK_API_KEY in backend/.env, then restart the backend.",
+        ) from e
+    except (OpenAIRateLimit, OpenAIBadRequest) as e:
+        msg = _anthropic_error_message(e)  # generic {"error":{"message"}} extractor
+        if _is_usage_or_rate_limit(e, msg):
+            log.warning("deepseek blocked by usage/rate limit: %s", msg)
+            raise HTTPException(429, f"AI temporarily unavailable — {msg}") from e
+        log.warning("deepseek rejected (400): %s", msg)
+        raise HTTPException(400, f"AI request rejected: {msg}") from e
+    except Exception as e:  # noqa: BLE001
+        log.warning("deepseek call failed: %s", e)
+        raise HTTPException(502, f"LLM call failed: {_anthropic_error_message(e)}") from e
+    return resp.choices[0].message.content or ""
+
+
 async def _call_llm(
     prompt: str,
     allowed_channels: set[str],
@@ -261,9 +370,13 @@ async def _call_llm(
     violations_hint: list[str] | None = None,
 ) -> dict:
     settings = get_settings()
-    api_key = settings.anthropic_api_key.strip()
-    if not api_key:
-        raise HTTPException(503, "ANTHROPIC_API_KEY not configured — set it in backend/.env")
+    # Prefer DeepSeek when its key is set (cheap, no Anthropic usage cap); else Claude.
+    use_deepseek = bool(settings.deepseek_api_key.strip())
+    if not use_deepseek and not settings.anthropic_api_key.strip():
+        raise HTTPException(
+            503,
+            "No LLM key configured — set DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY) in backend/.env",
+        )
 
     channels_str = ", ".join(sorted(allowed_channels))
     tokens_str = ", ".join(f"{{{{{t}}}}}" for t in SUPPORTED_TOKENS)
@@ -290,26 +403,11 @@ async def _call_llm(
             f"- {v}" for v in violations_hint
         )
 
-    client = AsyncAnthropic(api_key=api_key)
-    try:
-        response = await client.messages.create(
-            model=DEFAULT_MODEL,
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-    except AuthenticationError as e:
-        log.warning("sequence generate auth failed: %s", e)
-        raise HTTPException(
-            401,
-            "Anthropic API key rejected (invalid or expired). "
-            "Update ANTHROPIC_API_KEY in backend/.env with a valid key from console.anthropic.com, then restart the backend.",
-        ) from e
-    except (httpx.HTTPError, Exception) as e:  # noqa: BLE001
-        log.warning("sequence generate LLM call failed: %s", e)
-        raise HTTPException(502, f"LLM call failed: {type(e).__name__}") from e
-
-    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
+    text = (
+        await _deepseek_complete(settings, user_msg)
+        if use_deepseek
+        else await _anthropic_complete(settings, user_msg)
+    )
     plan = _parse_json(text)
     if not plan:
         raise HTTPException(502, "LLM returned unparseable response — try again")

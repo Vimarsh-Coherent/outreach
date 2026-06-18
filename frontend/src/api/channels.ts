@@ -97,3 +97,40 @@ export async function createEmailChannel(body: {
 export async function deleteChannel(id: number): Promise<void> {
   await api.delete(`/channels/${id}`);
 }
+
+// ── WhatsApp (Baileys sidecar) ──────────────────────────────────────────────
+
+export interface WhatsAppStatus {
+  state: string; // starting | qr | connected | disconnected | logged_out | unavailable
+  connected: boolean;
+  me?: string | null;
+  channel_id?: number | null;
+}
+
+export interface WhatsAppQr {
+  state: string;
+  qr?: string | null; // PNG data URL while pairing
+}
+
+export async function getWhatsAppStatus(): Promise<WhatsAppStatus> {
+  const r = await api.get<WhatsAppStatus>("/channels/whatsapp/status");
+  return r.data;
+}
+
+export async function getWhatsAppQr(): Promise<WhatsAppQr> {
+  const r = await api.get<WhatsAppQr>("/channels/whatsapp/qr");
+  return r.data;
+}
+
+export async function createWhatsAppChannel(body: {
+  display_label: string;
+  daily_cap: number;
+}): Promise<ChannelOut> {
+  const r = await api.post<ChannelOut>("/channels/whatsapp", body);
+  return r.data;
+}
+
+export async function logoutWhatsApp(): Promise<{ ok: boolean }> {
+  const r = await api.post<{ ok: boolean }>("/channels/whatsapp/logout", {});
+  return r.data;
+}
