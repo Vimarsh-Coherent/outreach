@@ -14,8 +14,17 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/vectorvault/*
 !data/vectorvault/.gitkeep
+data/qdrant/*
+!data/qdrant/.gitkeep
 
 .idea/
 .vscode/
 *.log
 *.egg-info/
+
+# build / generated artifacts
+*.tsbuildinfo
+backend/rag_eval_report.json
+
+# Added by code-review-graph
+.code-review-graph/

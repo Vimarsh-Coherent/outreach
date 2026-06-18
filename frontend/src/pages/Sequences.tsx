@@ -60,7 +60,14 @@ export default function Sequences() {
           >
             AI Sequence
           </button>
+          <Link
+            to="/sequences/generate"
+            className="border rounded px-3 py-1.5 bg-sky-600 text-white hover:bg-sky-700"
+          >
+            + AI sequence (RAG)
+          </Link>
           <button onClick={() => { setShowNew(s => !s); setShowAI(false); }} className="border rounded px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700">
+
             {showNew ? "Cancel" : "+ New sequence"}
           </button>
         </div>

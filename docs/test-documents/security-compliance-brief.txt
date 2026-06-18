@@ -1,0 +1,31 @@
+SecureShield Compliance Platform — Sales Brief
+
+WHO WE HELP
+CISOs and compliance leads at regulated companies (fintech, healthtech, SaaS handling PII).
+Teams preparing for SOC 2 Type II or ISO 27001 audits.
+
+WHAT WE DO
+SecureShield automates evidence collection for security audits. We connect to AWS, GCP,
+Okta, and common SaaS tools to pull logs, access reviews, and policy attestations into
+one audit-ready dashboard.
+
+WHY TEAMS BUY
+- Cuts audit prep time from 8–12 weeks to 3–4 weeks on average.
+- Reduces consultant spend by giving internal teams a single source of audit evidence.
+- Continuous monitoring — not a once-a-year scramble.
+
+PROOF
+- Helped a Series B payments company pass SOC 2 on first attempt.
+- 60+ customers in North America and Europe.
+
+PRICING (share only when asked)
+- Essentials: $1,200/month
+- Scale: $2,500/month
+- Enterprise: custom
+
+CTA
+Book a 20-minute audit-readiness assessment.
+
+TONE FOR OUTREACH
+Professional, credible, no fear-mongering. Reference audit deadlines or recent compliance
+headaches only if relevant to the prospect's role.

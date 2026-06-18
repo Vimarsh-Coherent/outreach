@@ -101,5 +101,3 @@ volumes:
   outreach_pg_data:
 
   outreach_qdrant_data:
-
-

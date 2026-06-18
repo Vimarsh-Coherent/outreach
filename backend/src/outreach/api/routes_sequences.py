@@ -4,19 +4,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from outreach.db import get_session
 from outreach.deps import get_current_user
 from outreach.models.user import User
+from outreach.schemas.grounding import SequenceGroundingResponse
 from outreach.schemas.sequences import (
     EnrolmentCreate,
     EnrolmentResult,
     ReorderRequest,
     SequenceCreate,
     SequenceDetail,
+    SequenceGenerateRequest,
+    SequenceGenerateResponse,
     SequenceOut,
     SequenceUpdate,
     StatusChange,
     StepCreate,
     StepOut,
 )
-from outreach.services import enrolments_service, sequences_service
+from outreach.services import (
+    enrolments_service,
+    grounding_service,
+    sequence_generator,
+    sequences_service,
+)
 
 router = APIRouter(prefix="/api/sequences", tags=["sequences"])
 
@@ -38,6 +46,18 @@ async def create_sequence(
     return await sequences_service.create_sequence(session, user.id, dto)
 
 
+@router.post("/generate", response_model=SequenceGenerateResponse, status_code=201)
+async def generate_sequence_from_prompt(
+    dto: SequenceGenerateRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SequenceGenerateResponse:
+    detail, warnings = await sequence_generator.generate_sequence_from_prompt(
+        session, user.id, dto.prompt, dto.timezone, dto.document_ids or None,
+    )
+    return SequenceGenerateResponse(sequence=detail, warnings=warnings)
+
+
 @router.get("/{sequence_id}", response_model=SequenceDetail)
 async def get_sequence(
     sequence_id: int,
@@ -45,6 +65,15 @@ async def get_sequence(
     session: AsyncSession = Depends(get_session),
 ) -> SequenceDetail:
     return await sequences_service.get_sequence_detail(session, user.id, sequence_id)
+
+
+@router.get("/{sequence_id}/grounding", response_model=SequenceGroundingResponse)
+async def get_sequence_grounding(
+    sequence_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SequenceGroundingResponse:
+    return await grounding_service.compute_sequence_grounding(session, user.id, sequence_id)
 
 
 @router.patch("/{sequence_id}", response_model=SequenceOut)

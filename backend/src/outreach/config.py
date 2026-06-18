@@ -1,12 +1,20 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# backend/src/outreach/config.py -> parents[2] == backend/
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_ENV_FILE = _BACKEND_DIR / ".env"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(_ENV_FILE) if _ENV_FILE.is_file() else ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     database_url: str = "postgresql+asyncpg://outreach:outreach@localhost:5432/coherent_outreach"
     sync_database_url: str = "postgresql+psycopg2://outreach:outreach@localhost:5432/coherent_outreach"
@@ -17,15 +25,31 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
-    # Vector store (Qdrant). Leave QDRANT_URL empty to use local embedded storage.
-    qdrant_url: str = ""
+    # Strip stray whitespace from pasted API keys (common copy-paste issue).
+    @field_validator("anthropic_api_key", "openai_api_key", mode="before")
+    @classmethod
+    def _strip_api_keys(cls, v: object) -> object:
+        return v.strip() if isinstance(v, str) else v
+
+    # Vector-store extras (Aman's vault layer). The active qdrant_url +
+    # embedding_model for the RAG eval pipeline are defined just below.
     qdrant_api_key: str = ""
     qdrant_local_path: str = "data/qdrant"
-    embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
 
     vault_storage_dir: str = "../data/vectorvault"
     vault_local: bool = True
+
+    # Sequence RAG (Qdrant + MiniLM)
+    qdrant_url: str = "http://127.0.0.1:6333"
+    qdrant_collection: str = "sequence_rag_chunks"
+    embedding_model: str = "all-MiniLM-L6-v2"
+    rag_chunk_size: int = 1000
+    rag_chunk_overlap: int = 200
+    rag_top_k: int = 5
+    rag_fetch_k: int = 8
+    rag_min_score: float = 0.35
+    rag_chunk_prompt_chars: int = 1000  # full chunk to the LLM → more source text to ground in
 
     tick_interval_seconds: int = 60
     imap_poll_interval_seconds: int = 60

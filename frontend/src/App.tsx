@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Enrolments from "./pages/Enrolments";
 import Leads from "./pages/Leads";
 import SequenceEditor from "./pages/SequenceEditor";
+import SequenceGenerate from "./pages/SequenceGenerate";
 import Sequences from "./pages/Sequences";
 import Timeline from "./pages/Timeline";
 import Watchdog from "./pages/Watchdog";
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/leads" element={<Leads />} />
           <Route path="/leads/:id/timeline" element={<Timeline />} />
           <Route path="/sequences" element={<Sequences />} />
+          <Route path="/sequences/generate" element={<SequenceGenerate />} />
           <Route path="/sequences/:id" element={<SequenceEditor />} />
           <Route path="/enrolments" element={<Enrolments />} />
           <Route path="/channels" element={<Channels />} />
