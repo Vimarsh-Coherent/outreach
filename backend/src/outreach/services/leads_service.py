@@ -5,6 +5,8 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from outreach.models.enrolment import Enrolment
+from outreach.models.event import Event, ReplySentiment
 from outreach.models.lead import Lead
 from outreach.services.identity import canonical_identity, linkedin_url_from_slug
 
@@ -131,6 +133,97 @@ async def list_leads(
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
     result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
     return list(result.scalars().all()), int(total)
+
+
+async def list_leads_enriched(
+    session: AsyncSession, user_id: int, *,
+    search: str | None = None, limit: int = 50, offset: int = 0,
+) -> tuple[list[dict], int]:
+    """list_leads + latest inbound reply + sentiment per lead, returned as dicts."""
+    base = select(Lead).where(Lead.user_id == user_id)
+    if search:
+        like = f"%{search}%"
+        base = base.where(or_(
+            Lead.email.ilike(like),
+            Lead.first_name.ilike(like),
+            Lead.last_name.ilike(like),
+            Lead.company.ilike(like),
+            Lead.title.ilike(like),
+        ))
+    total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
+    leads = list(result.scalars().all())
+    if not leads:
+        return [], int(total)
+
+    lead_ids = [lead.id for lead in leads]
+
+    from sqlalchemy import text as _text
+
+    # Fetch the latest reply per (lead, channel) in one query using DISTINCT ON.
+    # Email replies are filtered to only count messages FROM the lead (not echoes
+    # of the outreach user's own replies). LinkedIn and WhatsApp replies are always
+    # from the lead side so no from-filter is needed.
+    reply_rows = (await session.execute(_text("""
+        SELECT DISTINCT ON (en.lead_id, ev.channel)
+            en.lead_id,
+            ev.channel,
+            ev.id          AS event_id,
+            ev.occurred_at,
+            ev.payload,
+            rs.label,
+            rs.confidence,
+            rs.reasoning
+        FROM outreach.enrolments en
+        JOIN outreach.events ev  ON ev.enrolment_id = en.id
+        JOIN outreach.leads  l   ON l.id = en.lead_id
+        LEFT JOIN outreach.reply_sentiment rs ON rs.event_id = ev.id
+        WHERE ev.event_type = 'reply'
+          AND en.lead_id = ANY(:lead_ids)
+          AND (
+              (ev.channel = 'email' AND ev.payload->>'from' = l.email)
+              OR ev.channel IN ('linkedin', 'whatsapp')
+          )
+        ORDER BY en.lead_id, ev.channel, ev.occurred_at DESC
+    """), {"lead_ids": lead_ids})).all()
+
+    channel_replies_by_lead: dict[int, dict[str, dict]] = {}
+    latest_by_lead: dict[int, dict] = {}
+
+    for lead_id_val, channel, ev_id, occurred_at, payload, label, confidence, reasoning in reply_rows:
+        lid = int(lead_id_val)
+        body_text = (payload.get("body") or payload.get("snippet")) if payload else None
+        entry = {
+            "event_id": ev_id,
+            "occurred_at": occurred_at,
+            "body": body_text,
+            "channel": channel,
+            "sentiment_label": label,
+            "sentiment_confidence": confidence,
+            "sentiment_reasoning": reasoning,
+        }
+        channel_replies_by_lead.setdefault(lid, {})[channel] = entry
+        if lid not in latest_by_lead or occurred_at > latest_by_lead[lid]["occurred_at"]:
+            latest_by_lead[lid] = entry
+
+    enriched = []
+    for lead in leads:
+        enriched.append({
+            "id": lead.id,
+            "email": lead.email,
+            "phone": lead.phone,
+            "linkedin_url": lead.linkedin_url,
+            "first_name": lead.first_name,
+            "last_name": lead.last_name,
+            "company": lead.company,
+            "title": lead.title,
+            "source": lead.source,
+            "created_at": lead.created_at,
+            "updated_at": lead.updated_at,
+            "latest_reply": latest_by_lead.get(lead.id),
+            "channel_replies": channel_replies_by_lead.get(lead.id, {}),
+        })
+    return enriched, int(total)
 
 
 async def delete_lead(session: AsyncSession, user_id: int, lead_id: int) -> bool:

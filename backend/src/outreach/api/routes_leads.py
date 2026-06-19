@@ -80,11 +80,11 @@ async def list_leads(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> LeadListResponse:
-    items, total = await leads_service.list_leads(
+    items, total = await leads_service.list_leads_enriched(
         session, user.id, search=search, limit=limit, offset=offset
     )
     return LeadListResponse(
-        items=[LeadOut.model_validate(i, from_attributes=True) for i in items],
+        items=[LeadOut.model_validate(i) for i in items],
         total=total, limit=limit, offset=offset,
     )
 

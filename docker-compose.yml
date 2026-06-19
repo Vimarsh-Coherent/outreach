@@ -84,6 +84,10 @@ services:
 
       APP_HOST: 0.0.0.0
 
+    volumes:
+
+      - ./backend/src:/app/src
+
     depends_on:
 
       postgres:

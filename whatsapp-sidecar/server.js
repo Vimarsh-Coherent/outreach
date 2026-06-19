@@ -91,6 +91,8 @@ async function start() {
       printQRInTerminal: false,
       markOnlineOnConnect: false,
       browser: ["Coherent Outreach", "Chrome", "1.0.0"],
+      defaultQueryTimeoutMs: undefined, // disable per-query timeout so fetchProps never times out
+      connectTimeoutMs: 60_000,
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -130,22 +132,28 @@ async function start() {
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
+      log.info({ type, count: messages.length }, "messages.upsert fired");
+      const cutoff = type === "notify" ? 0 : Date.now() / 1000 - 600;
       for (const m of messages) {
         try {
           if (!m.message || m.key.fromMe) continue;
+          if (Number(m.messageTimestamp) < cutoff) continue;
           const jid = m.key.remoteJid || "";
-          if (jid.endsWith("@g.us") || jid === "status@broadcast") continue; // skip groups/status
+          if (jid.endsWith("@g.us") || jid === "status@broadcast") continue;
           const text =
             m.message.conversation ||
             m.message.extendedTextMessage?.text ||
             m.message.imageMessage?.caption ||
             m.message.videoMessage?.caption ||
             "";
-          if (!text) continue;
+          if (!text) { log.info({ jid, msgType: Object.keys(m.message || {}) }, "no text extracted"); continue; }
+          // For LID JIDs (@lid), use senderPn for the real phone number
+          const phoneJid = (jid.endsWith("@lid") && m.key.senderPn) ? m.key.senderPn : jid;
+          const from = "+" + phoneJid.split("@")[0];
+          log.info({ from, text: text.slice(0, 50) }, "forwarding inbound");
           await postInbound({
             id: m.key.id,
-            from: jid.split("@")[0],
+            from,
             text,
             timestamp: Number(m.messageTimestamp) || null,
             push_name: m.pushName || null,
