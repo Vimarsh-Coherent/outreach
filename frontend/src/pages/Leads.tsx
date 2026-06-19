@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import {
+  LatestReply,
   LeadField,
+  LeadOut,
   UploadCommitResponse,
   UploadPreviewResponse,
   commitUpload,
@@ -12,6 +14,7 @@ import {
   listLeads,
   previewUpload,
 } from "../api/leads";
+import { DraftResponse, SendResponse, draftFollowup, sendFollowup } from "../api/followups";
 
 const LEAD_FIELDS: { key: LeadField; label: string; required?: boolean }[] = [
   { key: "email", label: "Email" },
@@ -28,6 +31,333 @@ const PAGE_SIZE = 50;
 function blankMapping(): Record<LeadField, string | null> {
   return Object.fromEntries(LEAD_FIELDS.map(f => [f.key, null])) as Record<LeadField, string | null>;
 }
+
+// ─── Sentiment badge ──────────────────────────────────────────────────────────
+
+const SENTIMENT_COLORS: Record<string, string> = {
+  positive:    "bg-emerald-100 text-emerald-800 border-emerald-200",
+  interested:  "bg-sky-100 text-sky-800 border-sky-200",
+  objection:   "bg-amber-100 text-amber-800 border-amber-200",
+  negative:    "bg-rose-100 text-rose-800 border-rose-200",
+  unsubscribe: "bg-red-200 text-red-900 border-red-300",
+  auto_reply:  "bg-slate-100 text-slate-500 border-slate-200",
+  neutral:     "bg-slate-100 text-slate-500 border-slate-200",
+};
+
+function SentimentBadge({ label, size = "sm" }: { label: string | null; size?: "sm" | "xs" }) {
+  if (!label) return null;
+  const colors = SENTIMENT_COLORS[label] ?? "bg-slate-100 text-slate-500 border-slate-200";
+  const text = size === "xs" ? "text-xs px-1.5 py-0.5" : "text-xs px-2 py-0.5";
+  return (
+    <span className={`inline-block rounded-full border font-medium capitalize ${text} ${colors}`}>
+      {label.replace("_", " ")}
+    </span>
+  );
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 2) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+// ─── Reply modal ─────────────────────────────────────────────────────────────
+
+function ReplyModal({ lead, onClose }: { lead: LeadOut; onClose: () => void }) {
+  const reply = lead.latest_reply as LatestReply;
+  const [tab, setTab] = useState<"email" | "linkedin">("email");
+
+  // Email draft state
+  const [emailDraft, setEmailDraft] = useState<DraftResponse | null>(null);
+  const [draftingEmail, setDraftingEmail] = useState(false);
+  const [draftEmailErr, setDraftEmailErr] = useState<string | null>(null);
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<SendResponse | null>(null);
+
+  // LinkedIn draft state
+  const [liMessage, setLiMessage] = useState("");
+  const [draftingLi, setDraftingLi] = useState(false);
+  const [draftLiErr, setDraftLiErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function generateEmailDraft() {
+    setDraftingEmail(true);
+    setDraftEmailErr(null);
+    setSendResult(null);
+    try {
+      const d = await draftFollowup({ lead_id: lead.id });
+      setEmailDraft(d);
+      setEmailSubject(d.subject);
+      setEmailBody(d.body);
+    } catch (e) {
+      setDraftEmailErr(formatAxiosError(e));
+    } finally {
+      setDraftingEmail(false);
+    }
+  }
+
+  async function generateLinkedInDraft() {
+    setDraftingLi(true);
+    setDraftLiErr(null);
+    try {
+      const d = await draftFollowup({
+        lead_id: lead.id,
+        template_subject: "LinkedIn follow-up",
+        template_body:
+          "Hi {{first_name}}, I saw your recent reply and wanted to connect on LinkedIn. " +
+          "[One short sentence referencing the reply context. Propose a clear next step. " +
+          "Keep under 200 words. No subject line needed — this is a LinkedIn DM.]",
+      });
+      // For LinkedIn we only use the body, trim subject noise
+      setLiMessage(d.body);
+    } catch (e) {
+      setDraftLiErr(formatAxiosError(e));
+    } finally {
+      setDraftingLi(false);
+    }
+  }
+
+  async function handleSendEmail() {
+    if (!lead.email) return;
+    setSending(true);
+    setSendResult(null);
+    try {
+      const r = await sendFollowup({
+        lead_id: lead.id,
+        to_email: lead.email,
+        subject: emailSubject,
+        body: emailBody,
+      });
+      setSendResult(r);
+    } catch (e) {
+      setSendResult({ ok: false, detail: formatAxiosError(e) });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  function handleCopyLi() {
+    navigator.clipboard.writeText(liMessage).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  const leadName = [lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email || "Lead";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b shrink-0">
+          <div>
+            <h2 className="font-semibold text-slate-900 text-lg">Reply from {leadName}</h2>
+            <p className="text-xs text-slate-500 mt-0.5">{lead.email} · {lead.company || "—"}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+          {/* Reply card */}
+          <div className="rounded-lg border bg-slate-50 p-4 space-y-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <SentimentBadge label={reply.sentiment_label} />
+              {reply.sentiment_confidence != null && (
+                <span className="text-xs text-slate-500">
+                  {Math.round(reply.sentiment_confidence * 100)}% confidence
+                </span>
+              )}
+              <span className="text-xs text-slate-400 ml-auto">{timeAgo(reply.occurred_at)}</span>
+            </div>
+            {reply.sentiment_reasoning && (
+              <p className="text-xs text-slate-500 italic">{reply.sentiment_reasoning}</p>
+            )}
+            <div className="text-sm text-slate-800 whitespace-pre-wrap border-t pt-2">
+              {reply.body || <span className="text-slate-400">(no body captured)</span>}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-1 border-b">
+            <button
+              onClick={() => setTab("email")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                tab === "email"
+                  ? "border-sky-600 text-sky-700"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              Email Reply
+            </button>
+            <button
+              onClick={() => setTab("linkedin")}
+              disabled={!lead.linkedin_url}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                tab === "linkedin"
+                  ? "border-sky-600 text-sky-700"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              LinkedIn Message
+              {!lead.linkedin_url && <span className="ml-1 text-xs">(no URL)</span>}
+            </button>
+          </div>
+
+          {/* Email tab */}
+          {tab === "email" && (
+            <div className="space-y-3">
+              {!emailDraft && !draftingEmail && (
+                <button
+                  onClick={generateEmailDraft}
+                  className="w-full border-2 border-dashed border-sky-200 rounded-lg py-4 text-sky-700 hover:bg-sky-50 text-sm font-medium"
+                >
+                  Generate AI Draft
+                </button>
+              )}
+              {draftingEmail && (
+                <div className="text-center text-sm text-slate-500 py-6">
+                  <span className="inline-block animate-spin mr-2">⟳</span> Generating draft...
+                </div>
+              )}
+              {draftEmailErr && (
+                <div className="text-sm text-rose-700 bg-rose-50 rounded p-2">{draftEmailErr}</div>
+              )}
+              {emailDraft && (
+                <>
+                  {emailDraft.notes && (
+                    <div className="text-xs text-slate-500 bg-slate-50 border rounded p-2 italic">
+                      {emailDraft.notes}
+                    </div>
+                  )}
+                  <label className="block">
+                    <span className="text-xs text-slate-500 font-medium">Subject</span>
+                    <input
+                      value={emailSubject}
+                      onChange={e => setEmailSubject(e.target.value)}
+                      className="mt-1 w-full border rounded px-3 py-1.5 text-sm"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-slate-500 font-medium">Body</span>
+                    <textarea
+                      value={emailBody}
+                      onChange={e => setEmailBody(e.target.value)}
+                      rows={8}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm font-mono resize-y"
+                    />
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleSendEmail}
+                      disabled={sending || !lead.email || !emailSubject.trim() || !emailBody.trim()}
+                      className="px-4 py-1.5 rounded bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:bg-slate-300"
+                    >
+                      {sending ? "Sending..." : "Send Email"}
+                    </button>
+                    <button
+                      onClick={generateEmailDraft}
+                      disabled={draftingEmail}
+                      className="px-4 py-1.5 rounded border text-sm text-slate-600 hover:bg-slate-50"
+                    >
+                      Regenerate
+                    </button>
+                    {!lead.email && (
+                      <span className="text-xs text-rose-600">No email address on this lead</span>
+                    )}
+                  </div>
+                  {sendResult && (
+                    <div className={`text-sm rounded p-2 ${sendResult.ok ? "bg-emerald-50 text-emerald-800" : "bg-rose-50 text-rose-800"}`}>
+                      {sendResult.ok ? "Email sent successfully." : `Failed: ${sendResult.detail}`}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* LinkedIn tab */}
+          {tab === "linkedin" && lead.linkedin_url && (
+            <div className="space-y-3">
+              {!liMessage && !draftingLi && (
+                <button
+                  onClick={generateLinkedInDraft}
+                  className="w-full border-2 border-dashed border-sky-200 rounded-lg py-4 text-sky-700 hover:bg-sky-50 text-sm font-medium"
+                >
+                  Generate LinkedIn Message
+                </button>
+              )}
+              {draftingLi && (
+                <div className="text-center text-sm text-slate-500 py-6">
+                  <span className="inline-block animate-spin mr-2">⟳</span> Generating message...
+                </div>
+              )}
+              {draftLiErr && (
+                <div className="text-sm text-rose-700 bg-rose-50 rounded p-2">{draftLiErr}</div>
+              )}
+              {liMessage && (
+                <>
+                  <label className="block">
+                    <span className="text-xs text-slate-500 font-medium">LinkedIn Message (edit before sending)</span>
+                    <textarea
+                      value={liMessage}
+                      onChange={e => setLiMessage(e.target.value)}
+                      rows={7}
+                      maxLength={300}
+                      className="mt-1 w-full border rounded px-3 py-2 text-sm resize-y"
+                    />
+                    <span className="text-xs text-slate-400">{liMessage.length}/300 chars</span>
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleCopyLi}
+                      className="px-4 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-700"
+                    >
+                      {copied ? "Copied!" : "Copy Message"}
+                    </button>
+                    <a
+                      href={lead.linkedin_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-1.5 rounded border text-sm text-slate-600 hover:bg-slate-50"
+                    >
+                      Open LinkedIn Profile ↗
+                    </a>
+                    <button
+                      onClick={generateLinkedInDraft}
+                      disabled={draftingLi}
+                      className="px-4 py-1.5 rounded border text-sm text-slate-500 hover:bg-slate-50"
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Copy the message, open their LinkedIn profile, and paste it into the message box.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-3 border-t shrink-0 flex justify-end">
+          <button onClick={onClose} className="px-4 py-1.5 rounded border text-sm text-slate-600 hover:bg-slate-50">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Leads page ──────────────────────────────────────────────────────────
 
 export default function Leads() {
   const qc = useQueryClient();
@@ -52,6 +382,9 @@ export default function Leads() {
     linkedin_url: "", company: "", title: "",
   });
   const [manualStatus, setManualStatus] = useState<string | null>(null);
+
+  // Reply modal
+  const [replyLead, setReplyLead] = useState<LeadOut | null>(null);
 
   const manualMut = useMutation({
     mutationFn: async () => {
@@ -103,6 +436,8 @@ export default function Leads() {
 
   return (
     <div className="space-y-8 max-w-6xl">
+      {replyLead && <ReplyModal lead={replyLead} onClose={() => setReplyLead(null)} />}
+
       <div>
         <h2 className="text-2xl font-semibold">Leads</h2>
         <p className="text-sm text-slate-500 mt-1">
@@ -253,7 +588,9 @@ export default function Leads() {
 
       <section className="rounded border bg-white p-6">
         <div className="flex items-end gap-4 mb-4">
-          <h3 className="font-semibold text-slate-800 flex-1">Your leads {leadsData && <span className="text-slate-500 font-normal text-sm">({leadsData.total})</span>}</h3>
+          <h3 className="font-semibold text-slate-800 flex-1">
+            Your leads {leadsData && <span className="text-slate-500 font-normal text-sm">({leadsData.total})</span>}
+          </h3>
           <input
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
@@ -277,6 +614,7 @@ export default function Leads() {
                     <th className="py-1 pr-3">Phone</th>
                     <th className="py-1 pr-3">LinkedIn</th>
                     <th className="py-1 pr-3">Source</th>
+                    <th className="py-1 pr-3">Last Reply</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -289,6 +627,22 @@ export default function Leads() {
                       <td className="py-2 pr-3 font-mono text-xs">{l.phone || "—"}</td>
                       <td className="py-2 pr-3">{l.linkedin_url ? <a className="text-sky-600 hover:underline text-xs" href={l.linkedin_url} target="_blank" rel="noreferrer">profile</a> : "—"}</td>
                       <td className="py-2 pr-3 text-xs text-slate-500">{l.source}</td>
+                      <td className="py-2 pr-3">
+                        {l.latest_reply ? (
+                          <button
+                            onClick={() => setReplyLead(l)}
+                            className="flex items-center gap-1.5 group"
+                            title={l.latest_reply.body?.slice(0, 100) ?? "View reply"}
+                          >
+                            <SentimentBadge label={l.latest_reply.sentiment_label} size="xs" />
+                            <span className="text-xs text-slate-400 group-hover:text-slate-600">
+                              {timeAgo(l.latest_reply.occurred_at)}
+                            </span>
+                          </button>
+                        ) : (
+                          <span className="text-slate-300 text-xs">—</span>
+                        )}
+                      </td>
                       <td className="py-2">
                         <button onClick={() => { if (confirm("Delete this lead?")) deleteMut.mutate(l.id); }} className="text-rose-600 hover:underline text-xs">delete</button>
                       </td>

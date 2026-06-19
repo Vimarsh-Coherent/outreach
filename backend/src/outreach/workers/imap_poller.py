@@ -24,7 +24,7 @@ from outreach.db import SessionLocal
 from outreach.models.channel import Channel
 from outreach.schemas.channels import IMAPConfig
 from outreach.services import reply_processor
-from outreach.services.email_parse import parse_inbound
+from outreach.services.email_parse import NOREPLY_FROM_RX, parse_inbound
 from outreach.utils.crypto import decrypt_json
 
 log = logging.getLogger("outreach.imap")
@@ -36,6 +36,27 @@ def _imap_date_since(days: int) -> str:
 
 def _ssl_ctx() -> ssl.SSLContext:
     return ssl.create_default_context()
+
+
+async def _match_reply_by_sender(from_email: str) -> int | None:
+    """Fallback for Gmail which rewrites Message-IDs on send.
+    Finds the latest sent email step_run for the lead with this email address."""
+    from outreach.models.enrolment import Enrolment
+    from outreach.models.lead import Lead
+    from outreach.models.step_run import StepRun
+
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(StepRun.id)
+            .join(Enrolment, StepRun.enrolment_id == Enrolment.id)
+            .join(Lead, Enrolment.lead_id == Lead.id)
+            .where(Lead.email == from_email.lower())
+            .where(StepRun.channel == "email")
+            .where(StepRun.status == "sent")
+            .order_by(StepRun.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
 
 async def _poll_channel(channel: Channel, search_days: int = 7) -> dict:
@@ -62,51 +83,81 @@ async def _poll_channel(channel: Channel, search_days: int = 7) -> dict:
         login_resp = await client.login(cfg.username, cfg.password)
         if login_resp.result != "OK":
             return {**counts, "error": f"login:{login_resp.result}"}
-        sel = await client.select(cfg.mailbox)
+
+        # Quote mailbox names that contain spaces (e.g. "[Gmail]/All Mail").
+        def _select_mailbox(name: str):
+            if " " in name and not name.startswith('"'):
+                name = f'"{name}"'
+            return client.select(name)
+
+        # Gmail routes emails to category tabs (Promotions, Updates, Social)
+        # which don't appear in standard INBOX via IMAP. All Mail is the only
+        # folder guaranteed to contain every received email on Gmail.
+        # Try All Mail first; fall back to the configured mailbox for non-Gmail servers.
+        sel = await _select_mailbox("[Gmail]/All Mail")
+        if sel.result != "OK":
+            sel = await _select_mailbox(cfg.mailbox)
         if sel.result != "OK":
             return {**counts, "error": f"select:{sel.result}"}
 
         since = _imap_date_since(search_days)
-        # We can't fully filter by header in standard IMAP SEARCH, so we use SINCE +
-        # narrowing by HEADER on either In-Reply-To or Content-Type. Some servers
-        # don't index Content-Type; we fall back to plain SINCE.
         trace_host = settings.email_trace_host
-        candidate_queries = [
-            f'(SINCE {since} HEADER "In-Reply-To" "{trace_host}")',
-            f'(SINCE {since} HEADER "References" "{trace_host}")',
-            f'(SINCE {since} HEADER "Content-Type" "delivery-status")',
-            # Last-resort full sweep — bounded by SINCE.
-            f'(SINCE {since})',
-        ]
         uids: set[bytes] = set()
-        for q in candidate_queries[:3]:  # try targeted first
+
+        # Use UID SEARCH so results are UIDs (not sequence numbers).
+        # Sequence numbers differ from UIDs in All Mail — mixing them causes
+        # uid fetch to return wrong/empty emails.
+        async def _uid_search(q: str) -> None:
             r = await client.search(q)
             if r.result == "OK" and r.lines:
                 for u in (r.lines[0] or b"").split():
                     uids.add(u)
-            if len(uids) >= 200:
-                break
-        if not uids:
-            # Server didn't support targeted; do bounded sweep only when targeted gave 0.
-            r = await client.search(candidate_queries[-1])
-            if r.result == "OK" and r.lines:
-                for u in (r.lines[0] or b"").split()[:200]:
-                    uids.add(u)
+
+        # Targeted searches (works on servers with proper HEADER search).
+        for q in [
+            f'(SINCE {since} HEADER "In-Reply-To" "{trace_host}")',
+            f'(SINCE {since} HEADER "References" "{trace_host}")',
+            f'(SINCE {since} HEADER "Content-Type" "delivery-status")',
+        ]:
+            await _uid_search(q)
+
+        # Always also sweep the last 2 days — Gmail rewrites Message-IDs on outbound
+        # SMTP so In-Reply-To won't contain our outreach.local token. Also catches
+        # replies that land in non-Primary Gmail tabs (not visible in INBOX).
+        await _uid_search(f"(SINCE {_imap_date_since(2)})")
 
         for uid in list(uids)[:200]:
-            r = await client.uid("fetch", uid.decode(), "(RFC822)")
+            r = await client.fetch(uid.decode(), "(RFC822)")
             if r.result != "OK" or not r.lines:
                 counts["errors"] += 1
                 continue
+            # aioimaplib returns literal octets (the actual email) as bytearray,
+            # and IMAP framing ("7560 FETCH (RFC822 {6987}", ")") as bytes.
+            # Only use bytearray lines so the framing prefix doesn't break parsing.
             raw = b""
             for line in r.lines:
-                if isinstance(line, (bytes, bytearray)) and len(line) > 0:
+                if isinstance(line, bytearray) and len(line) > 0:
                     raw += line
             if not raw:
                 counts["errors"] += 1
                 continue
             counts["fetched"] += 1
             parsed = parse_inbound(raw)
+
+            # Sender-based fallback: Gmail replaces our Message-ID with its own, so the
+            # HMAC match in parse_inbound fails and it returns "unrelated". If the From
+            # address belongs to a lead we've emailed, treat it as their reply.
+            if (
+                parsed.kind == "unrelated"
+                and parsed.from_addr
+                and not NOREPLY_FROM_RX.search(parsed.from_addr)
+            ):
+                step_run_id = await _match_reply_by_sender(parsed.from_addr)
+                if step_run_id is not None:
+                    parsed.kind = "reply"
+                    parsed.matched_step_run_id = step_run_id
+                    log.debug("sender-match: %s -> step_run %d", parsed.from_addr, step_run_id)
+
             counts[parsed.kind] = counts.get(parsed.kind, 0) + 1
             if parsed.kind == "unrelated" or parsed.matched_step_run_id is None:
                 continue

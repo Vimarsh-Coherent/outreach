@@ -5,6 +5,8 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from outreach.models.enrolment import Enrolment
+from outreach.models.event import Event, ReplySentiment
 from outreach.models.lead import Lead
 from outreach.services.identity import canonical_identity, linkedin_url_from_slug
 
@@ -131,6 +133,119 @@ async def list_leads(
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
     result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
     return list(result.scalars().all()), int(total)
+
+
+async def list_leads_enriched(
+    session: AsyncSession, user_id: int, *,
+    search: str | None = None, limit: int = 50, offset: int = 0,
+) -> tuple[list[dict], int]:
+    """list_leads + latest inbound reply + sentiment per lead, returned as dicts."""
+    base = select(Lead).where(Lead.user_id == user_id)
+    if search:
+        like = f"%{search}%"
+        base = base.where(or_(
+            Lead.email.ilike(like),
+            Lead.first_name.ilike(like),
+            Lead.last_name.ilike(like),
+            Lead.company.ilike(like),
+            Lead.title.ilike(like),
+        ))
+    total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
+    leads = list(result.scalars().all())
+    if not leads:
+        return [], int(total)
+
+    lead_ids = [lead.id for lead in leads]
+
+    # Subquery: latest reply event id per lead — pick by occurred_at so the
+    # most-recent inbound timestamp wins, not the highest auto-increment id.
+    # Also exclude events where the "from" payload matches the lead's own email
+    # (naman's reply-to-reply would otherwise show up as the lead's latest reply).
+    latest_reply_sq = (
+        select(
+            Enrolment.lead_id.label("lead_id"),
+            func.max(Event.occurred_at).label("max_occurred_at"),
+        )
+        .join(Event, Event.enrolment_id == Enrolment.id)
+        .join(Lead, Lead.id == Enrolment.lead_id)
+        .where(
+            Event.event_type == "reply",
+            Enrolment.lead_id.in_(lead_ids),
+            # Only count events where the sender is the lead (not the outreach user)
+            Event.payload["from"].as_string() == Lead.email,
+        )
+        .group_by(Enrolment.lead_id)
+        .subquery()
+    )
+
+    # Join back to get the event id for that max timestamp
+    latest_event_sq = (
+        select(
+            Enrolment.lead_id.label("lead_id"),
+            func.max(Event.id).label("event_id"),
+        )
+        .join(Event, Event.enrolment_id == Enrolment.id)
+        .join(Lead, Lead.id == Enrolment.lead_id)
+        .join(
+            latest_reply_sq,
+            (latest_reply_sq.c.lead_id == Enrolment.lead_id)
+            & (Event.occurred_at == latest_reply_sq.c.max_occurred_at),
+        )
+        .where(
+            Event.event_type == "reply",
+            Enrolment.lead_id.in_(lead_ids),
+            Event.payload["from"].as_string() == Lead.email,
+        )
+        .group_by(Enrolment.lead_id)
+        .subquery()
+    )
+
+    reply_rows = (await session.execute(
+        select(
+            latest_event_sq.c.lead_id,
+            Event.id,
+            Event.occurred_at,
+            Event.payload,
+            ReplySentiment.label,
+            ReplySentiment.confidence,
+            ReplySentiment.reasoning,
+        )
+        .join(Event, Event.id == latest_event_sq.c.event_id)
+        .outerjoin(ReplySentiment, ReplySentiment.event_id == Event.id)
+    )).all()
+
+    reply_by_lead: dict[int, dict] = {}
+    for lead_id_val, ev_id, occurred_at, payload, label, confidence, reasoning in reply_rows:
+        body_text = None
+        if payload:
+            body_text = payload.get("body") or payload.get("snippet") or None
+        reply_by_lead[int(lead_id_val)] = {
+            "event_id": ev_id,
+            "occurred_at": occurred_at,
+            "body": body_text,
+            "sentiment_label": label,
+            "sentiment_confidence": confidence,
+            "sentiment_reasoning": reasoning,
+        }
+
+    enriched = []
+    for lead in leads:
+        enriched.append({
+            "id": lead.id,
+            "email": lead.email,
+            "phone": lead.phone,
+            "linkedin_url": lead.linkedin_url,
+            "first_name": lead.first_name,
+            "last_name": lead.last_name,
+            "company": lead.company,
+            "title": lead.title,
+            "source": lead.source,
+            "created_at": lead.created_at,
+            "updated_at": lead.updated_at,
+            "latest_reply": reply_by_lead.get(lead.id),
+        })
+    return enriched, int(total)
 
 
 async def delete_lead(session: AsyncSession, user_id: int, lead_id: int) -> bool:

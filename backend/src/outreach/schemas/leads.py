@@ -16,6 +16,15 @@ class LeadCreate(BaseModel):
     title: str | None = None
 
 
+class LatestReplyOut(BaseModel):
+    event_id: int
+    occurred_at: datetime
+    body: str | None
+    sentiment_label: str | None
+    sentiment_confidence: float | None
+    sentiment_reasoning: str | None
+
+
 class LeadOut(BaseModel):
     id: int
     email: str | None
@@ -28,6 +37,7 @@ class LeadOut(BaseModel):
     source: str | None
     created_at: datetime
     updated_at: datetime
+    latest_reply: LatestReplyOut | None = None
 
 
 class LeadListResponse(BaseModel):

@@ -317,8 +317,6 @@ async def process_one(claim: dict) -> dict:
         # Manual tasks (call / sms) — log reminder and advance. WhatsApp is now
         # a real automated channel (handled below), no longer a manual no-op.
         if step.channel in ("call", "sms"):
-            from outreach.models.event import Event
-
             run.status = "sent"
             run.sent_at = datetime.now(timezone.utc)
             run.provider_message_id = f"manual-{step.channel}-{run.id}"
