@@ -118,19 +118,19 @@ export default function SequenceGenerate() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <Link to="/sequences" className="text-sm text-sky-700 hover:underline">&larr; Back to sequences</Link>
-        <h2 className="text-2xl font-semibold mt-2">Generate sequence with AI</h2>
+        <h2 className="page-title mt-2">Generate sequence with AI</h2>
         <p className="text-sm text-slate-500 mt-1">
           Upload pitch documents (optional), describe the sequence you want, and AI will draft a cadence using your docs as context.
         </p>
       </div>
 
       {error && (
-        <div className="rounded border border-rose-200 bg-rose-50 text-rose-800 text-sm p-3">
+        <div className="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 text-sm p-3">
           {error}
         </div>
       )}
 
-      <section className="rounded border bg-white p-4 space-y-3">
+      <section className="card card-pad space-y-3">
         <h3 className="text-sm font-medium text-slate-700">Documents (optional)</h3>
         <p className="text-xs text-slate-500">PDF, DOCX, TXT, or MD — max 20 MB each. Indexed docs are used as RAG context when generating.</p>
         <div className="flex gap-2 items-center">
@@ -166,11 +166,11 @@ export default function SequenceGenerate() {
                     {d.status === "failed" && d.error_message && ` · ${d.error_message}`}
                   </div>
                 </div>
-                <span className={`text-xs px-2 py-0.5 rounded ${
-                  d.status === "indexed" ? "bg-emerald-100 text-emerald-800"
-                  : d.status === "failed" ? "bg-rose-100 text-rose-800"
-                  : "bg-slate-100 text-slate-600"
-                }`}>{d.status}</span>
+                <span className={
+                  d.status === "indexed" ? "badge-green"
+                  : d.status === "failed" ? "badge-rose"
+                  : "badge-slate"
+                }>{d.status}</span>
                 <button
                   type="button"
                   onClick={() => deleteMut.mutate(d.id)}
@@ -187,25 +187,25 @@ export default function SequenceGenerate() {
         )}
       </section>
 
-      <section className="rounded border bg-white p-4 space-y-4">
-        <label className="block text-sm">
-          <span className="text-slate-600 mb-1 block">Prompt</span>
+      <section className="card card-pad space-y-4">
+        <label className="block">
+          <span className="label">Prompt</span>
           <textarea
             value={prompt}
             onChange={(e) => { setPrompt(e.target.value); setError(null); }}
             rows={8}
-            className="w-full border rounded px-3 py-2 text-sm"
+            className="input"
             placeholder="Example: 3-email SaaS outreach to CTOs at mid-size companies. Friendly tone. Follow up every 3 days."
           />
           <span className="text-xs text-slate-500 mt-1 block">{prompt.trim().length}/4000 (min 10)</span>
         </label>
 
-        <label className="block text-sm">
-          <span className="text-slate-600 mb-1 block">Timezone</span>
+        <label className="block">
+          <span className="label">Timezone</span>
           <input
             value={tz}
             onChange={(e) => setTz(e.target.value)}
-            className="w-full border rounded px-2 py-1.5 font-mono text-sm"
+            className="input font-mono"
             placeholder="Asia/Kolkata"
           />
         </label>
@@ -214,11 +214,11 @@ export default function SequenceGenerate() {
           <button
             disabled={!canSubmit}
             onClick={() => generateMut.mutate()}
-            className="border rounded px-4 py-1.5 bg-sky-600 text-white hover:bg-sky-700 disabled:bg-slate-300"
+            className="btn-primary"
           >
             {generateMut.isPending ? "Generating sequence…" : "Generate sequence"}
           </button>
-          <Link to="/sequences" className="border rounded px-4 py-1.5 text-sm hover:bg-slate-50 inline-flex items-center">
+          <Link to="/sequences" className="btn-ghost">
             Cancel
           </Link>
         </div>

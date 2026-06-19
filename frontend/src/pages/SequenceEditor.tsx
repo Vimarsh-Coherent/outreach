@@ -1,9 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import SequenceFlowCanvas from "../components/SequenceFlowCanvas";
+import { reorderStepsWithTransitionDelays, sortSteps } from "../lib/sequenceSteps";
 import { listLeads } from "../api/leads";
 import {
+  SequenceDetail,
   StepChannel,
   StepCreate,
   StepOut,
@@ -12,6 +15,7 @@ import {
   enrolLeads,
   getSequence,
   getSequenceGrounding,
+  reorderSteps,
   updateStep,
 } from "../api/sequences";
 
@@ -75,6 +79,10 @@ export default function SequenceEditor() {
   const [body, setBody] = useState("");
   const [delayDays, setDelayDays] = useState(0);
   const [delayHours, setDelayHours] = useState(0);
+  // When the user clicks "+" on a connector, the next added step is inserted at
+  // that position instead of appended (add → reorder into place).
+  const [insertIndex, setInsertIndex] = useState<number | null>(null);
+  const addFormRef = useRef<HTMLDivElement>(null);
 
   const addMut = useMutation({
     mutationFn: async () => {
@@ -84,9 +92,17 @@ export default function SequenceEditor() {
       };
       return addStep(sequenceId, payload);
     },
-    onSuccess: () => {
+    onSuccess: async (newStep) => {
+      // Insert-at-position: the new step appends at the end, so move it into
+      // place by id order, then persist the reorder.
+      if (insertIndex != null && seq) {
+        const ids = sortSteps(seq.steps).map(s => s.id);
+        ids.splice(insertIndex, 0, newStep.id);
+        try { await reorderSteps(sequenceId, ids); } catch { /* fall back to appended order */ }
+      }
       qc.invalidateQueries({ queryKey: ["sequence", sequenceId] });
       setSubject(""); setBody(""); setDelayDays(0); setDelayHours(0);
+      setInsertIndex(null);
     },
   });
 
@@ -94,6 +110,33 @@ export default function SequenceEditor() {
     mutationFn: async (stepId: number) => deleteStep(sequenceId, stepId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sequence", sequenceId] }),
   });
+
+  const reorderMut = useMutation({
+    mutationFn: async (stepIds: number[]) => reorderSteps(sequenceId, stepIds),
+    // Optimistic: renumber + re-thread waits immediately so the flow updates the
+    // instant you drop a card, without waiting for the round-trip.
+    onMutate: async (stepIds: number[]) => {
+      await qc.cancelQueries({ queryKey: ["sequence", sequenceId] });
+      const prev = qc.getQueryData<SequenceDetail>(["sequence", sequenceId]);
+      if (prev) {
+        qc.setQueryData<SequenceDetail>(["sequence", sequenceId], {
+          ...prev,
+          steps: reorderStepsWithTransitionDelays(prev.steps, stepIds),
+        });
+      }
+      return { prev };
+    },
+    onError: (_e, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["sequence", sequenceId], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["sequence", sequenceId] }),
+  });
+
+  const handleInsertAt = (index: number) => {
+    setInsertIndex(index);
+    setEditingId(null);
+    addFormRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   // Inline edit of an existing step's content (subject / body / delay)
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -155,34 +198,39 @@ export default function SequenceEditor() {
   return (
     <div className="space-y-6 max-w-5xl">
       <div className="text-sm">
-        <Link to="/sequences" className="text-sky-600 hover:underline">← back to sequences</Link>
+        <Link to="/sequences" className="text-brand-600 hover:underline">← back to sequences</Link>
       </div>
-      <div className="flex items-end justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold">{seq.name}</h2>
-          <div className="text-sm text-slate-500 mt-1">
-            <span className="inline-block px-2 py-0.5 rounded text-xs bg-slate-100 mr-2">{seq.status}</span>
-            <span className="font-mono">{seq.timezone}</span> · {seq.send_window_start.slice(0,5)}–{seq.send_window_end.slice(0,5)} · {DAYS_MASK_LABEL(seq.send_days_mask)}
-            {seq.ai_followups_enabled && <span className="ml-2 text-xs px-2 py-0.5 bg-violet-100 text-violet-700 rounded">AI follow-ups</span>}
+      <div className="flex items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="page-title">{seq.name}</h2>
+          <div className="text-sm text-slate-500 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="badge-slate capitalize">{seq.status}</span>
+            <span className="font-mono text-slate-600">{seq.timezone}</span>
+            <span className="text-slate-300">·</span>
+            <span>{seq.send_window_start.slice(0,5)}–{seq.send_window_end.slice(0,5)}</span>
+            <span className="text-slate-300">·</span>
+            <span>{DAYS_MASK_LABEL(seq.send_days_mask)}</span>
+            {seq.ai_followups_enabled && <span className="badge-brand">AI follow-ups</span>}
           </div>
-          {seq.description && <p className="text-sm text-slate-700 mt-2 max-w-2xl">{seq.description}</p>}
+          {seq.description && <p className="text-sm text-slate-600 mt-2 max-w-2xl">{seq.description}</p>}
         </div>
-        <button onClick={() => setEnrolOpen(o => !o)} disabled={seq.steps.length === 0} className="border rounded px-3 py-1.5 bg-sky-600 text-white hover:bg-sky-700 disabled:bg-slate-300">
+        <button onClick={() => setEnrolOpen(o => !o)} disabled={seq.steps.length === 0} className="btn-primary shrink-0">
           {enrolOpen ? "Close" : "Enrol leads"}
         </button>
       </div>
 
-      <section className="rounded border bg-white p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-slate-800">Steps ({seq.steps.length})</h3>
+      <section className="card">
+        <div className="card-head">
+          <h3 className="font-semibold text-slate-900">Steps <span className="text-slate-400 font-normal">({seq.steps.length})</span></h3>
           <button
             onClick={() => setGroundOn(true)}
             disabled={seq.steps.length === 0 || groundingLoading}
-            className="border rounded px-3 py-1.5 text-xs bg-violet-600 text-white hover:bg-violet-700 disabled:bg-slate-300"
+            className="btn-ghost btn-sm"
           >
             {groundingLoading ? "Scoring…" : grounding ? "Re-check grounding" : "Check document grounding"}
           </button>
         </div>
+        <div className="card-pad space-y-4">
 
         {groundOn && (
           <div className="rounded border bg-violet-50 p-3 text-xs space-y-2">
@@ -224,161 +272,168 @@ export default function SequenceEditor() {
         )}
 
         {seq.steps.length === 0 ? (
-          <p className="text-sm text-slate-500">No steps yet. Add the first one below.</p>
+          <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+            <p className="text-sm font-medium text-slate-700">No steps yet</p>
+            <p className="text-xs text-slate-500 mt-1">Add the first one below to start building your flow.</p>
+          </div>
         ) : (
-          <ol className="space-y-2">
-            {seq.steps.map((s: StepOut) => {
-              const editing = editingId === s.id;
-              const editCap = CHANNEL_BODY_CAP[s.channel as StepChannel];
-              const editOver = editBody.length > editCap;
-              const editInvalid =
-                !editBody.trim() || editOver || (s.channel === "email" && !editSubject.trim());
-              return (
-              <li key={s.id} className="border rounded p-3 bg-slate-50">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="text-sm font-medium">
-                    Step {s.step_order} · {CHANNEL_LABEL[s.channel as StepChannel]}
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-slate-500">
-                    {(() => {
-                      const g = groundingByStep.get(s.id);
-                      if (!g) return null;
-                      const st = VERDICT_STYLE[g.verdict] ?? VERDICT_STYLE.weak;
-                      return (
-                        <span
-                          className={`px-2 py-0.5 rounded font-medium ${st.chip}`}
-                          title={`cosine ${g.similarity.toFixed(3)} vs ${g.best_chunk_filename ?? "document"} · ${Math.round(g.supported_ratio * 100)}% of sentences supported`}
-                        >
-                          sim {g.similarity.toFixed(2)} · {st.label}
-                        </span>
-                      );
-                    })()}
-                    <span>delay {s.delay_days}d {s.delay_hours}h</span>
-                    {editing ? (
-                      <button onClick={() => setEditingId(null)} className="text-slate-600 hover:underline">cancel</button>
-                    ) : (
-                      <button onClick={() => startEdit(s)} className="text-sky-600 hover:underline">edit</button>
-                    )}
-                    <button onClick={() => { if (confirm(`Delete step ${s.step_order}?`)) deleteStepMut.mutate(s.id); }} className="text-rose-600 hover:underline">delete</button>
-                  </div>
-                </div>
-
-                {editing ? (
-                  <div className="mt-2 space-y-2">
-                    <div className="grid grid-cols-12 gap-2 text-xs">
-                      <label className="col-span-3">
-                        <span className="block text-slate-500 mb-1">Delay days</span>
-                        <input type="number" min={0} max={365} value={editDelayDays} onChange={e => setEditDelayDays(Number(e.target.value))} className="w-full border rounded px-2 py-1" />
-                      </label>
-                      <label className="col-span-3">
-                        <span className="block text-slate-500 mb-1">Delay hours</span>
-                        <input type="number" min={0} max={23} value={editDelayHours} onChange={e => setEditDelayHours(Number(e.target.value))} className="w-full border rounded px-2 py-1" />
-                      </label>
-                    </div>
-                    {s.channel === "email" && (
-                      <label className="block text-xs">
-                        <span className="block text-slate-500 mb-1">Subject (max 250)</span>
-                        <input value={editSubject} onChange={e => setEditSubject(e.target.value)} maxLength={250} className="w-full border rounded px-2 py-1" />
-                      </label>
-                    )}
-                    <label className="block text-xs">
-                      <span className="block text-slate-500 mb-1">
-                        Body <span className={`ml-1 ${editOver ? "text-rose-600" : "text-slate-400"}`}>{editBody.length}/{editCap}</span>
-                      </span>
-                      <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={8} className={`w-full border rounded px-2 py-1 font-mono ${editOver ? "border-rose-400" : ""}`} />
-                      <div className="text-slate-400 mt-1">Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{sender_name}}"}</code></div>
-                    </label>
-                    <div className="flex gap-2">
-                      <button
-                        disabled={editInvalid || updateStepMut.isPending}
-                        onClick={() => updateStepMut.mutate(s)}
-                        className="border rounded px-3 py-1 text-xs bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-300"
-                      >
-                        {updateStepMut.isPending ? "Saving…" : "Save"}
-                      </button>
-                      <button onClick={() => setEditingId(null)} className="border rounded px-3 py-1 text-xs hover:bg-slate-100">Cancel</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {s.subject && <div className="text-xs text-slate-700 mt-1"><span className="text-slate-400">Subject:</span> {s.subject}</div>}
-                    <pre className="text-xs whitespace-pre-wrap mt-1 text-slate-700">{s.body}</pre>
-                  </>
-                )}
-              </li>
-              );
-            })}
-          </ol>
+          <>
+            <SequenceFlowCanvas
+              steps={seq.steps}
+              selectedStepId={editingId}
+              onSelect={startEdit}
+              onDelete={(id) => deleteStepMut.mutate(id)}
+              onInsert={handleInsertAt}
+              onReorder={(ids) => reorderMut.mutate(ids)}
+            />
+            <p className="text-xs text-slate-400 mt-1">
+              Drag a card to reorder · click ✏️ to edit · ＋ on a connector inserts a step · scroll/pinch to zoom
+              {reorderMut.isPending && <span className="ml-2 text-sky-600 animate-pulse">saving order…</span>}
+            </p>
+          </>
         )}
 
-        <div className="border-t pt-4 space-y-3">
-          <h4 className="text-sm font-semibold text-slate-700">Add step</h4>
+        {(() => {
+          const s = seq.steps.find(st => st.id === editingId);
+          if (!s) return null;
+          const editCap = CHANNEL_BODY_CAP[s.channel as StepChannel];
+          const editOver = editBody.length > editCap;
+          const editInvalid =
+            !editBody.trim() || editOver || (s.channel === "email" && !editSubject.trim());
+          const g = groundingByStep.get(s.id);
+          const gstyle = g ? (VERDICT_STYLE[g.verdict] ?? VERDICT_STYLE.weak) : null;
+          return (
+            <div className="rounded-lg border border-sky-200 bg-sky-50/40 p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-slate-800">
+                  Editing step {s.step_order} · {CHANNEL_LABEL[s.channel as StepChannel]}
+                </h4>
+                <div className="flex items-center gap-3 text-xs">
+                  {g && gstyle && (
+                    <span className={`px-2 py-0.5 rounded font-medium ${gstyle.chip}`} title={`cosine ${g.similarity.toFixed(3)}`}>
+                      sim {g.similarity.toFixed(2)} · {gstyle.label}
+                    </span>
+                  )}
+                  <button onClick={() => setEditingId(null)} className="text-slate-600 hover:underline">close</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-12 gap-2">
+                <label className="col-span-3">
+                  <span className="label">Delay days</span>
+                  <input type="number" min={0} max={365} value={editDelayDays} onChange={e => setEditDelayDays(Number(e.target.value))} className="input" />
+                </label>
+                <label className="col-span-3">
+                  <span className="label">Delay hours</span>
+                  <input type="number" min={0} max={23} value={editDelayHours} onChange={e => setEditDelayHours(Number(e.target.value))} className="input" />
+                </label>
+              </div>
+              {s.channel === "email" && (
+                <label className="block">
+                  <span className="label">Subject (max 250)</span>
+                  <input value={editSubject} onChange={e => setEditSubject(e.target.value)} maxLength={250} className="input" />
+                </label>
+              )}
+              <label className="block">
+                <span className="label">
+                  Body <span className={`ml-1 normal-case ${editOver ? "text-rose-600" : "text-slate-400"}`}>{editBody.length}/{editCap}</span>
+                </span>
+                <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={8} className={`input font-mono text-xs ${editOver ? "border-rose-400 focus:border-rose-400 focus:ring-rose-100" : ""}`} />
+                <div className="text-xs text-slate-400 mt-1">Tokens: <code className="bg-slate-100 px-1 rounded">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{company}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{sender_name}}"}</code></div>
+              </label>
+              <div className="flex gap-2">
+                <button
+                  disabled={editInvalid || updateStepMut.isPending}
+                  onClick={() => updateStepMut.mutate(s)}
+                  className="btn-primary btn-sm"
+                >
+                  {updateStepMut.isPending ? "Saving…" : "Save"}
+                </button>
+                <button onClick={() => setEditingId(null)} className="btn-ghost btn-sm">Cancel</button>
+              </div>
+            </div>
+          );
+        })()}
+
+        <div ref={addFormRef} className="border-t border-slate-100 pt-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-slate-700">
+              {insertIndex != null ? `Insert step at position ${insertIndex + 1}` : "Add step"}
+            </h4>
+            {insertIndex != null && (
+              <button onClick={() => setInsertIndex(null)} className="text-xs text-slate-500 hover:underline">
+                cancel insert (append to end)
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-12 gap-3 text-sm">
-            <label className="col-span-4"><span className="block text-slate-600 mb-1">Channel</span>
-              <select value={channel} onChange={e => setChannel(e.target.value as StepChannel)} className="w-full border rounded px-2 py-1.5">
+            <label className="col-span-4"><span className="label">Channel</span>
+              <select value={channel} onChange={e => setChannel(e.target.value as StepChannel)} className="input">
                 <option value="email">Email</option>
                 <option value="linkedin_dm">LinkedIn DM</option>
                 <option value="linkedin_connect">LinkedIn connect (note)</option>
+                <option value="whatsapp">WhatsApp</option>
               </select>
             </label>
-            <label className="col-span-4"><span className="block text-slate-600 mb-1">Delay days</span>
-              <input type="number" min={0} max={365} value={delayDays} onChange={e => setDelayDays(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
+            <label className="col-span-4"><span className="label">Delay days</span>
+              <input type="number" min={0} max={365} value={delayDays} onChange={e => setDelayDays(Number(e.target.value))} className="input" />
             </label>
-            <label className="col-span-4"><span className="block text-slate-600 mb-1">Delay hours</span>
-              <input type="number" min={0} max={23} value={delayHours} onChange={e => setDelayHours(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
+            <label className="col-span-4"><span className="label">Delay hours</span>
+              <input type="number" min={0} max={23} value={delayHours} onChange={e => setDelayHours(Number(e.target.value))} className="input" />
             </label>
             {channel === "email" && (
-              <label className="col-span-12"><span className="block text-slate-600 mb-1">Subject (max 250)</span>
-                <input value={subject} onChange={e => setSubject(e.target.value)} maxLength={250} className="w-full border rounded px-2 py-1.5" placeholder="Quick follow-up on {{company}}" />
+              <label className="col-span-12"><span className="label">Subject (max 250)</span>
+                <input value={subject} onChange={e => setSubject(e.target.value)} maxLength={250} className="input" placeholder="Quick follow-up on {{company}}" />
               </label>
             )}
             <label className="col-span-12">
-              <span className="block text-slate-600 mb-1">
+              <span className="label">
                 Body
-                <span className={`ml-2 text-xs ${bodyOver ? "text-rose-600" : "text-slate-400"}`}>{body.length}/{bodyCap}</span>
+                <span className={`ml-2 normal-case ${bodyOver ? "text-rose-600" : "text-slate-400"}`}>{body.length}/{bodyCap}</span>
               </span>
-              <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} className={`w-full border rounded px-2 py-1.5 font-mono text-xs ${bodyOver ? "border-rose-400" : ""}`} placeholder="Hi {{first_name}}, ..." />
-              <div className="text-xs text-slate-500 mt-1">Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{last_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{title}}"}</code> <code className="bg-slate-100 px-1">{"{{email}}"}</code></div>
+              <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} className={`input font-mono text-xs ${bodyOver ? "border-rose-400 focus:border-rose-400 focus:ring-rose-100" : ""}`} placeholder="Hi {{first_name}}, ..." />
+              <div className="text-xs text-slate-500 mt-1">Tokens: <code className="bg-slate-100 px-1 rounded">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{last_name}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{company}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{title}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{email}}"}</code></div>
             </label>
           </div>
           <button
             disabled={addMut.isPending || !body.trim() || bodyOver || (channel === "email" && !subject.trim())}
             onClick={() => addMut.mutate()}
-            className="border rounded px-4 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-300"
+            className="btn-primary"
           >
-            {addMut.isPending ? "Adding..." : "Add step"}
+            {addMut.isPending ? "Adding..." : insertIndex != null ? `Insert at position ${insertIndex + 1}` : "Add step"}
           </button>
+        </div>
         </div>
       </section>
 
       {enrolOpen && (
-        <section className="rounded border bg-white p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-slate-800">Enrol leads</h3>
-            <button onClick={() => enrolMut.mutate()} disabled={selectedLeads.length === 0 || enrolMut.isPending} className="border rounded px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-300">
+        <section className="card">
+          <div className="card-head">
+            <h3 className="font-semibold text-slate-900">Enrol leads</h3>
+            <button onClick={() => enrolMut.mutate()} disabled={selectedLeads.length === 0 || enrolMut.isPending} className="btn-primary btn-sm">
               {enrolMut.isPending ? "Enrolling..." : `Enrol ${selectedLeads.length} selected`}
             </button>
           </div>
+          <div className="card-pad space-y-3">
           {!leads?.items.length ? (
-            <p className="text-sm text-slate-500">No leads. <Link to="/leads" className="text-sky-600 underline">Upload some first.</Link></p>
+            <p className="text-sm text-slate-500">No leads. <Link to="/leads" className="text-brand-600 underline">Upload some first.</Link></p>
           ) : (
             <>
-              <label className="text-xs text-slate-600">
+              <label className="text-xs text-slate-600 flex items-center">
                 <input type="checkbox" checked={selectedLeads.length === leads.items.length} onChange={e => setSelectedLeads(e.target.checked ? leads.items.map(l => l.id) : [])} className="mr-2" />
                 select all on this page ({leads.items.length})
               </label>
-              <div className="border rounded overflow-y-auto max-h-96">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-50 text-left sticky top-0">
-                    <tr><th></th><th>Name</th><th>Email</th><th>Company</th></tr>
+              <div className="border border-slate-200 rounded-lg overflow-y-auto max-h-96">
+                <table className="w-full">
+                  <thead className="bg-slate-50 sticky top-0">
+                    <tr><th className="th"></th><th className="th">Name</th><th className="th">Email</th><th className="th">Company</th></tr>
                   </thead>
                   <tbody>
                     {leads.items.map(l => (
-                      <tr key={l.id} className="border-t">
-                        <td className="px-2 py-1"><input type="checkbox" checked={selectedLeads.includes(l.id)} onChange={e => setSelectedLeads(prev => e.target.checked ? [...prev, l.id] : prev.filter(x => x !== l.id))} /></td>
-                        <td className="px-2 py-1">{[l.first_name, l.last_name].filter(Boolean).join(" ")}</td>
-                        <td className="px-2 py-1 font-mono">{l.email}</td>
-                        <td className="px-2 py-1">{l.company}</td>
+                      <tr key={l.id} className="border-t border-slate-100">
+                        <td className="td"><input type="checkbox" checked={selectedLeads.includes(l.id)} onChange={e => setSelectedLeads(prev => e.target.checked ? [...prev, l.id] : prev.filter(x => x !== l.id))} /></td>
+                        <td className="td">{[l.first_name, l.last_name].filter(Boolean).join(" ")}</td>
+                        <td className="td font-mono">{l.email}</td>
+                        <td className="td">{l.company}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -386,6 +441,7 @@ export default function SequenceEditor() {
               </div>
             </>
           )}
+          </div>
         </section>
       )}
     </div>

@@ -104,16 +104,16 @@ export default function Leads() {
   return (
     <div className="space-y-8 max-w-6xl">
       <div>
-        <h2 className="text-2xl font-semibold">Leads</h2>
+        <h2 className="page-title">Leads</h2>
         <p className="text-sm text-slate-500 mt-1">
           Upload CSV / TSV / Excel. Columns are auto-mapped; you can override them before committing. Dedupe is by canonical identity (email → phone → LinkedIn slug).
         </p>
       </div>
 
-      <section className="rounded border bg-white p-6 space-y-3">
+      <section className="card card-pad space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-slate-800">Add a single lead manually</h3>
-          <button onClick={() => setManualOpen(o => !o)} className="text-sm text-sky-700 hover:underline">
+          <button onClick={() => setManualOpen(o => !o)} className="btn-ghost btn-sm">
             {manualOpen ? "Hide" : "+ Add manually"}
           </button>
         </div>
@@ -122,7 +122,7 @@ export default function Leads() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
               {LEAD_FIELDS.map(f => (
                 <label key={f.key}>
-                  <span className="block text-slate-600 mb-1">{f.label}</span>
+                  <span className="label">{f.label}</span>
                   <input
                     value={manual[f.key]}
                     onChange={e => setManual({ ...manual, [f.key]: e.target.value })}
@@ -130,7 +130,7 @@ export default function Leads() {
                       : f.key === "phone" ? "+1 415 555 1234"
                       : f.key === "linkedin_url" ? "https://www.linkedin.com/in/alex"
                       : ""}
-                    className="w-full border rounded px-2 py-1.5 font-mono text-xs"
+                    className="input font-mono text-xs"
                   />
                 </label>
               ))}
@@ -143,7 +143,7 @@ export default function Leads() {
             <button
               disabled={manualMut.isPending || (!manual.email.trim() && !manual.phone.trim() && !manual.linkedin_url.trim())}
               onClick={() => manualMut.mutate()}
-              className="border rounded px-4 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-300"
+              className="btn-primary"
             >
               {manualMut.isPending ? "Saving..." : "Save lead"}
             </button>
@@ -156,7 +156,7 @@ export default function Leads() {
         )}
       </section>
 
-      <section className="rounded border bg-white p-6 space-y-4">
+      <section className="card card-pad space-y-4">
         <h3 className="font-semibold text-slate-800">Or upload a CSV / Excel file</h3>
         <input
           type="file"
@@ -166,7 +166,7 @@ export default function Leads() {
             const f = e.target.files?.[0];
             if (f) previewMut.mutate(f);
           }}
-          className="block text-sm"
+          className="input text-sm"
         />
         {previewMut.isPending && <div className="text-sm text-slate-500">Parsing...</div>}
         {error && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">{error}</div>}
@@ -182,11 +182,11 @@ export default function Leads() {
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                 {LEAD_FIELDS.map(f => (
                   <label key={f.key}>
-                    <span className="block text-slate-600 mb-1">{f.label}</span>
+                    <span className="label">{f.label}</span>
                     <select
                       value={mapping[f.key] ?? ""}
                       onChange={e => setMapping({ ...mapping, [f.key]: e.target.value || null })}
-                      className="w-full border rounded px-2 py-1.5"
+                      className="input"
                     >
                       <option value="">— ignore —</option>
                       {preview.columns.map(c => <option key={c} value={c}>{c}</option>)}
@@ -203,15 +203,15 @@ export default function Leads() {
 
             <div>
               <h4 className="font-medium text-slate-700 mb-2">Preview (first 10 rows)</h4>
-              <div className="border rounded overflow-x-auto">
+              <div className="card overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="bg-slate-50 text-left text-slate-600">
-                    <tr>{preview.columns.map(c => <th key={c} className="px-2 py-1.5 font-medium">{c}</th>)}</tr>
+                  <thead>
+                    <tr>{preview.columns.map(c => <th key={c} className="th">{c}</th>)}</tr>
                   </thead>
                   <tbody>
                     {preview.sample_rows.map((row, i) => (
-                      <tr key={i} className="border-t">
-                        {preview.columns.map(c => <td key={c} className="px-2 py-1 font-mono">{String(row[c] ?? "")}</td>)}
+                      <tr key={i} className="border-t border-slate-100">
+                        {preview.columns.map(c => <td key={c} className="td font-mono">{String(row[c] ?? "")}</td>)}
                       </tr>
                     ))}
                   </tbody>
@@ -223,13 +223,13 @@ export default function Leads() {
               <button
                 onClick={() => commitMut.mutate()}
                 disabled={!hasIdentityMapped || commitMut.isPending}
-                className="border rounded px-4 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-300"
+                className="btn-primary"
               >
                 {commitMut.isPending ? "Importing..." : `Import ${preview.row_count} rows`}
               </button>
               <button
                 onClick={() => { setPreview(null); setMapping(blankMapping()); }}
-                className="text-sm text-slate-600 hover:underline"
+                className="btn-ghost"
               >
                 Cancel
               </button>
@@ -251,7 +251,7 @@ export default function Leads() {
         )}
       </section>
 
-      <section className="rounded border bg-white p-6">
+      <section className="card card-pad">
         <div className="flex items-end gap-4 mb-4">
           <h3 className="font-semibold text-slate-800 flex-1">Your leads {leadsData && <span className="text-slate-500 font-normal text-sm">({leadsData.total})</span>}</h3>
           <input
@@ -259,9 +259,9 @@ export default function Leads() {
             onChange={e => setSearchInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") { setSearch(searchInput); setPage(0); } }}
             placeholder="search email, name, company..."
-            className="border rounded px-3 py-1.5 text-sm w-72"
+            className="input w-72"
           />
-          <button onClick={() => { setSearch(searchInput); setPage(0); }} className="border rounded px-3 py-1.5 text-sm">Search</button>
+          <button onClick={() => { setSearch(searchInput); setPage(0); }} className="btn-ghost">Search</button>
         </div>
         {!leadsData?.items.length ? (
           <p className="text-sm text-slate-500">No leads yet.</p>
@@ -269,27 +269,27 @@ export default function Leads() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-left text-slate-500">
+                <thead>
                   <tr>
-                    <th className="py-1 pr-3">Name</th>
-                    <th className="py-1 pr-3">Email</th>
-                    <th className="py-1 pr-3">Company / Title</th>
-                    <th className="py-1 pr-3">Phone</th>
-                    <th className="py-1 pr-3">LinkedIn</th>
-                    <th className="py-1 pr-3">Source</th>
-                    <th></th>
+                    <th className="th">Name</th>
+                    <th className="th">Email</th>
+                    <th className="th">Company / Title</th>
+                    <th className="th">Phone</th>
+                    <th className="th">LinkedIn</th>
+                    <th className="th">Source</th>
+                    <th className="th"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {leadsData.items.map(l => (
-                    <tr key={l.id} className="border-t">
-                      <td className="py-2 pr-3">{[l.first_name, l.last_name].filter(Boolean).join(" ") || "—"}</td>
-                      <td className="py-2 pr-3 font-mono text-xs">{l.email || "—"}</td>
-                      <td className="py-2 pr-3">{l.company || "—"}{l.title ? <div className="text-xs text-slate-500">{l.title}</div> : null}</td>
-                      <td className="py-2 pr-3 font-mono text-xs">{l.phone || "—"}</td>
-                      <td className="py-2 pr-3">{l.linkedin_url ? <a className="text-sky-600 hover:underline text-xs" href={l.linkedin_url} target="_blank" rel="noreferrer">profile</a> : "—"}</td>
-                      <td className="py-2 pr-3 text-xs text-slate-500">{l.source}</td>
-                      <td className="py-2">
+                    <tr key={l.id} className="border-t border-slate-100">
+                      <td className="td">{[l.first_name, l.last_name].filter(Boolean).join(" ") || "—"}</td>
+                      <td className="td font-mono text-xs">{l.email || "—"}</td>
+                      <td className="td">{l.company || "—"}{l.title ? <div className="text-xs text-slate-500">{l.title}</div> : null}</td>
+                      <td className="td font-mono text-xs">{l.phone || "—"}</td>
+                      <td className="td">{l.linkedin_url ? <a className="text-brand-600 hover:underline text-xs" href={l.linkedin_url} target="_blank" rel="noreferrer">profile</a> : "—"}</td>
+                      <td className="td text-xs text-slate-500">{l.source}</td>
+                      <td className="td">
                         <button onClick={() => { if (confirm("Delete this lead?")) deleteMut.mutate(l.id); }} className="text-rose-600 hover:underline text-xs">delete</button>
                       </td>
                     </tr>
@@ -300,8 +300,8 @@ export default function Leads() {
             <div className="flex items-center justify-between mt-4 text-sm">
               <div className="text-slate-500">Page {page + 1} of {totalPages}</div>
               <div className="flex gap-2">
-                <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="border rounded px-3 py-1 disabled:text-slate-300">Prev</button>
-                <button disabled={page + 1 >= totalPages} onClick={() => setPage(p => p + 1)} className="border rounded px-3 py-1 disabled:text-slate-300">Next</button>
+                <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="btn-ghost btn-sm disabled:text-slate-300">Prev</button>
+                <button disabled={page + 1 >= totalPages} onClick={() => setPage(p => p + 1)} className="btn-ghost btn-sm disabled:text-slate-300">Next</button>
               </div>
             </div>
           </>

@@ -54,12 +54,12 @@ function StepBadge({ result, label }: { result: { ok: boolean; detail: string; l
 }
 
 const WA_STATE_LABEL: Record<string, { text: string; cls: string }> = {
-  connected: { text: "Connected", cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
-  qr: { text: "Scan QR to link", cls: "text-sky-700 bg-sky-50 border-sky-200" },
-  starting: { text: "Starting…", cls: "text-slate-600 bg-slate-50 border-slate-200" },
-  disconnected: { text: "Reconnecting…", cls: "text-amber-700 bg-amber-50 border-amber-200" },
-  logged_out: { text: "Logged out — re-scan", cls: "text-amber-700 bg-amber-50 border-amber-200" },
-  unavailable: { text: "Sidecar offline", cls: "text-rose-700 bg-rose-50 border-rose-200" },
+  connected: { text: "Connected", cls: "badge-green" },
+  qr: { text: "Scan QR to link", cls: "badge-brand" },
+  starting: { text: "Starting…", cls: "badge-slate" },
+  disconnected: { text: "Reconnecting…", cls: "badge-amber" },
+  logged_out: { text: "Logged out — re-scan", cls: "badge-amber" },
+  unavailable: { text: "Sidecar offline", cls: "badge-rose" },
 };
 
 function WhatsAppCard() {
@@ -105,13 +105,14 @@ function WhatsAppCard() {
   const badge = WA_STATE_LABEL[state] ?? WA_STATE_LABEL.starting;
 
   return (
-    <section className="rounded border bg-white p-6 space-y-4">
-      <div className="flex items-center justify-between">
+    <section className="card">
+      <div className="card-head">
         <h3 className="font-semibold text-slate-800 flex items-center gap-2">
           <span className="text-emerald-600">●</span> WhatsApp
         </h3>
-        <span className={`text-xs px-2 py-0.5 rounded border ${badge.cls}`}>{badge.text}</span>
+        <span className={badge.cls}>{badge.text}</span>
       </div>
+      <div className="card-pad space-y-4">
       <p className="text-sm text-slate-500">
         Links a real WhatsApp number via the local sidecar (no Business API). Open WhatsApp on your
         phone → <span className="font-medium">Settings → Linked devices → Link a device</span>, then scan the code below.
@@ -119,7 +120,7 @@ function WhatsAppCard() {
       </p>
 
       {state === "unavailable" && (
-        <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-3">
+        <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-3">
           The WhatsApp sidecar isn’t running. The boot agent starts it automatically when online —
           or run it manually: <code className="bg-white px-1 rounded">node whatsapp-sidecar/server.js</code>.
         </div>
@@ -128,9 +129,9 @@ function WhatsAppCard() {
       {!connected && state !== "unavailable" && (
         <div className="flex flex-col items-center gap-3 py-2">
           {qr?.qr ? (
-            <img src={qr.qr} alt="WhatsApp QR" className="w-56 h-56 border rounded bg-white" />
+            <img src={qr.qr} alt="WhatsApp QR" className="w-56 h-56 border rounded-lg bg-white" />
           ) : (
-            <div className="w-56 h-56 border rounded bg-slate-50 flex items-center justify-center text-sm text-slate-400">
+            <div className="w-56 h-56 border rounded-lg bg-slate-50 flex items-center justify-center text-sm text-slate-400">
               {state === "logged_out" ? "Generating fresh QR…" : "Waiting for QR…"}
             </div>
           )}
@@ -140,7 +141,7 @@ function WhatsAppCard() {
 
       {connected && (
         <div className="space-y-3">
-          <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded p-3">
+          <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
             Connected{status?.me ? ` as ${status.me.split(":")[0].split("@")[0]}` : ""}.
             {status?.channel_id
               ? " WhatsApp steps in your sequences will send through this number."
@@ -148,17 +149,17 @@ function WhatsAppCard() {
           </div>
           {!status?.channel_id && (
             <div className="grid grid-cols-12 gap-3 items-end text-sm">
-              <label className="col-span-6"><span className="block text-slate-600 mb-1">Display label</span>
-                <input value={label} onChange={(e) => setLabel(e.target.value)} className="w-full border rounded px-2 py-1.5" />
+              <label className="col-span-6"><span className="label">Display label</span>
+                <input value={label} onChange={(e) => setLabel(e.target.value)} className="input" />
               </label>
-              <label className="col-span-3"><span className="block text-slate-600 mb-1">Daily cap</span>
-                <input type="number" value={cap} onChange={(e) => setCap(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
+              <label className="col-span-3"><span className="label">Daily cap</span>
+                <input type="number" value={cap} onChange={(e) => setCap(Number(e.target.value))} className="input" />
               </label>
               <div className="col-span-3 flex justify-end">
                 <button
                   disabled={createMut.isPending}
                   onClick={() => createMut.mutate()}
-                  className="border rounded px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                  className="btn-primary btn-sm"
                 >{createMut.isPending ? "Saving…" : "Create channel"}</button>
               </div>
             </div>
@@ -171,7 +172,8 @@ function WhatsAppCard() {
         </div>
       )}
 
-      {waError && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">{waError}</div>}
+      {waError && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2">{waError}</div>}
+      </div>
     </section>
   );
 }
@@ -259,68 +261,71 @@ export default function Channels() {
   return (
     <div className="space-y-8 max-w-5xl">
       <div>
-        <h2 className="text-2xl font-semibold">Channels</h2>
+        <h2 className="page-title">Channels</h2>
         <p className="text-sm text-slate-500 mt-1">
           Connect any SMTP mailbox (Gmail, Outlook, Yahoo, Zoho, Microsoft 365, SendGrid/SES/Mailgun, or a custom server). IMAP is used to detect replies and bounces. Credentials are encrypted at rest (Fernet).
         </p>
       </div>
 
-      <section className="rounded border bg-white p-6 space-y-5">
-        <h3 className="font-semibold text-slate-800">Add email channel</h3>
+      <section className="card">
+        <div className="card-head">
+          <h3 className="font-semibold text-slate-800">Add email channel</h3>
+        </div>
+        <div className="card-pad space-y-5">
 
         <div className="grid grid-cols-2 gap-4">
           <label className="text-sm">
-            <span className="block text-slate-600 mb-1">Provider preset</span>
+            <span className="label">Provider preset</span>
             <select
               value={presetKey}
               onChange={e => setPresetKey(e.target.value)}
-              className="w-full border rounded px-2 py-1.5"
+              className="input"
             >
               {presets?.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
           </label>
           <label className="text-sm">
-            <span className="block text-slate-600 mb-1">Display label</span>
+            <span className="label">Display label</span>
             <input
               value={displayLabel}
               onChange={e => setDisplayLabel(e.target.value)}
-              className="w-full border rounded px-2 py-1.5"
+              className="input"
               placeholder="e.g. Sales — Gmail"
             />
           </label>
         </div>
 
         {currentPreset?.notes && (
-          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">{currentPreset.notes}</div>
+          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">{currentPreset.notes}</div>
         )}
 
         <div>
           <h4 className="font-medium text-slate-700 mb-2">SMTP (outbound)</h4>
           <div className="grid grid-cols-12 gap-3 text-sm">
-            <label className="col-span-6"><span className="block text-slate-600 mb-1">Host</span>
-              <input value={smtp.host} onChange={e => setSmtp({ ...smtp, host: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" />
+            <label className="col-span-6"><span className="label">Host</span>
+              <input value={smtp.host} onChange={e => setSmtp({ ...smtp, host: e.target.value })} className="input font-mono" />
             </label>
-            <label className="col-span-2"><span className="block text-slate-600 mb-1">Port</span>
-              <input type="number" value={smtp.port} onChange={e => setSmtp({ ...smtp, port: Number(e.target.value) })} className="w-full border rounded px-2 py-1.5" />
+            <label className="col-span-2"><span className="label">Port</span>
+              <input type="number" value={smtp.port} onChange={e => setSmtp({ ...smtp, port: Number(e.target.value) })} className="input" />
             </label>
-            <label className="col-span-4"><span className="block text-slate-600 mb-1">Security</span>
-              <select value={smtp.security} onChange={e => setSmtp({ ...smtp, security: e.target.value as SecurityMode })} className="w-full border rounded px-2 py-1.5">
+            <label className="col-span-4"><span className="label">Security</span>
+              <select value={smtp.security} onChange={e => setSmtp({ ...smtp, security: e.target.value as SecurityMode })} className="input">
                 <option value="starttls">STARTTLS</option>
                 <option value="ssl_tls">SSL/TLS</option>
                 <option value="none">None (plain)</option>
               </select>
             </label>
-            <label className="col-span-6"><span className="block text-slate-600 mb-1">Username</span>
-              <input value={smtp.username} onChange={e => setSmtp({ ...smtp, username: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" autoComplete="off" />
+            <label className="col-span-6"><span className="label">Username</span>
+              <input value={smtp.username} onChange={e => setSmtp({ ...smtp, username: e.target.value })} className="input font-mono" autoComplete="off" />
             </label>
-            <label className="col-span-6"><span className="block text-slate-600 mb-1">Password / App password</span>
-              <input type="password" value={smtp.password} onChange={e => setSmtp({ ...smtp, password: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" autoComplete="new-password" />
+            <label className="col-span-6"><span className="label">Password / App password</span>
+              <input type="password" value={smtp.password} onChange={e => setSmtp({ ...smtp, password: e.target.value })} className="input font-mono" autoComplete="new-password" />
             </label>
-            <label className="col-span-7"><span className="block text-slate-600 mb-1">From email</span>
-              <input value={smtp.from_email} onChange={e => setSmtp({ ...smtp, from_email: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" placeholder="me@example.com" />
+            <label className="col-span-7"><span className="label">From email</span>
+              <input value={smtp.from_email} onChange={e => setSmtp({ ...smtp, from_email: e.target.value })} className="input font-mono" placeholder="me@example.com" />
             </label>
-            <label className="col-span-5"><span className="block text-slate-600 mb-1">From name (optional)</span>
-              <input value={smtp.from_name ?? ""} onChange={e => setSmtp({ ...smtp, from_name: e.target.value })} className="w-full border rounded px-2 py-1.5" placeholder="Vimarsh @ Coherent" />
+            <label className="col-span-5"><span className="label">From name (optional)</span>
+              <input value={smtp.from_name ?? ""} onChange={e => setSmtp({ ...smtp, from_name: e.target.value })} className="input" placeholder="Vimarsh @ Coherent" />
             </label>
           </div>
         </div>
@@ -340,14 +345,14 @@ export default function Channels() {
                 use same username/password as SMTP
               </label>
               <div className="grid grid-cols-12 gap-3 text-sm">
-                <label className="col-span-6"><span className="block text-slate-600 mb-1">Host</span>
-                  <input value={imap.host} onChange={e => setImap({ ...imap, host: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" />
+                <label className="col-span-6"><span className="label">Host</span>
+                  <input value={imap.host} onChange={e => setImap({ ...imap, host: e.target.value })} className="input font-mono" />
                 </label>
-                <label className="col-span-2"><span className="block text-slate-600 mb-1">Port</span>
-                  <input type="number" value={imap.port} onChange={e => setImap({ ...imap, port: Number(e.target.value) })} className="w-full border rounded px-2 py-1.5" />
+                <label className="col-span-2"><span className="label">Port</span>
+                  <input type="number" value={imap.port} onChange={e => setImap({ ...imap, port: Number(e.target.value) })} className="input" />
                 </label>
-                <label className="col-span-4"><span className="block text-slate-600 mb-1">Security</span>
-                  <select value={imap.security} onChange={e => setImap({ ...imap, security: e.target.value as SecurityMode })} className="w-full border rounded px-2 py-1.5">
+                <label className="col-span-4"><span className="label">Security</span>
+                  <select value={imap.security} onChange={e => setImap({ ...imap, security: e.target.value as SecurityMode })} className="input">
                     <option value="ssl_tls">SSL/TLS</option>
                     <option value="starttls">STARTTLS</option>
                     <option value="none">None (plain)</option>
@@ -355,19 +360,19 @@ export default function Channels() {
                 </label>
                 {!shareCreds && (
                   <>
-                    <label className="col-span-6"><span className="block text-slate-600 mb-1">Username</span>
-                      <input value={imap.username} onChange={e => setImap({ ...imap, username: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" autoComplete="off" />
+                    <label className="col-span-6"><span className="label">Username</span>
+                      <input value={imap.username} onChange={e => setImap({ ...imap, username: e.target.value })} className="input font-mono" autoComplete="off" />
                     </label>
-                    <label className="col-span-6"><span className="block text-slate-600 mb-1">Password</span>
-                      <input type="password" value={imap.password} onChange={e => setImap({ ...imap, password: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" autoComplete="new-password" />
+                    <label className="col-span-6"><span className="label">Password</span>
+                      <input type="password" value={imap.password} onChange={e => setImap({ ...imap, password: e.target.value })} className="input font-mono" autoComplete="new-password" />
                     </label>
                   </>
                 )}
-                <label className="col-span-6"><span className="block text-slate-600 mb-1">Mailbox</span>
-                  <input value={imap.mailbox} onChange={e => setImap({ ...imap, mailbox: e.target.value })} className="w-full border rounded px-2 py-1.5 font-mono" />
+                <label className="col-span-6"><span className="label">Mailbox</span>
+                  <input value={imap.mailbox} onChange={e => setImap({ ...imap, mailbox: e.target.value })} className="input font-mono" />
                 </label>
-                <label className="col-span-6"><span className="block text-slate-600 mb-1">Daily send cap</span>
-                  <input type="number" value={dailyCap} onChange={e => setDailyCap(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
+                <label className="col-span-6"><span className="label">Daily send cap</span>
+                  <input type="number" value={dailyCap} onChange={e => setDailyCap(Number(e.target.value))} className="input" />
                 </label>
               </div>
             </>
@@ -375,27 +380,27 @@ export default function Channels() {
         </div>
 
         <div className="grid grid-cols-12 gap-3 items-end text-sm">
-          <label className="col-span-8"><span className="block text-slate-600 mb-1">Send probe email to (optional)</span>
-            <input value={probeTo} onChange={e => setProbeTo(e.target.value)} placeholder="yourself@example.com" className="w-full border rounded px-2 py-1.5 font-mono" />
+          <label className="col-span-8"><span className="label">Send probe email to (optional)</span>
+            <input value={probeTo} onChange={e => setProbeTo(e.target.value)} placeholder="yourself@example.com" className="input font-mono" />
           </label>
           <div className="col-span-4 flex gap-2 justify-end">
             <button
               disabled={testMut.isPending}
               onClick={() => testMut.mutate()}
-              className="border rounded px-3 py-1.5 bg-slate-50 hover:bg-slate-100"
+              className="btn-ghost btn-sm"
             >{testMut.isPending ? "Testing..." : "Test"}</button>
             <button
               disabled={saveMut.isPending}
               onClick={() => saveMut.mutate()}
-              className="border rounded px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+              className="btn-primary btn-sm"
             >{saveMut.isPending ? "Saving..." : "Save"}</button>
           </div>
         </div>
 
-        {error && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">{error}</div>}
+        {error && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2">{error}</div>}
 
         {testResult && (
-          <div className="border rounded p-3 bg-slate-50 space-y-1.5">
+          <div className="border rounded-lg p-3 bg-slate-50 space-y-1.5">
             <StepBadge result={testResult.smtp_connect} label="SMTP connect" />
             <StepBadge result={testResult.smtp_auth} label="SMTP authenticate" />
             <StepBadge result={testResult.smtp_probe_send} label="SMTP probe send" />
@@ -403,37 +408,43 @@ export default function Channels() {
             <StepBadge result={testResult.imap_auth} label="IMAP authenticate" />
           </div>
         )}
+        </div>
       </section>
 
       <WhatsAppCard />
 
-      <section className="rounded border bg-white p-6">
-        <h3 className="font-semibold text-slate-800 mb-3">Saved channels</h3>
+      <section className="card">
+        <div className="card-head">
+          <h3 className="font-semibold text-slate-800">Saved channels</h3>
+        </div>
+        <div className="card-pad">
         {!channels?.length ? (
           <p className="text-sm text-slate-500">No channels yet. Add one above.</p>
         ) : (
           <table className="w-full text-sm">
-            <thead className="text-left text-slate-500">
+            <thead>
               <tr>
-                <th className="py-1 pr-3">Label</th>
-                <th className="py-1 pr-3">Type</th>
-                <th className="py-1 pr-3">SMTP</th>
-                <th className="py-1 pr-3">IMAP</th>
-                <th className="py-1 pr-3">Cap</th>
-                <th className="py-1 pr-3">Status</th>
-                <th></th>
+                <th className="th">Label</th>
+                <th className="th">Type</th>
+                <th className="th">SMTP</th>
+                <th className="th">IMAP</th>
+                <th className="th">Cap</th>
+                <th className="th">Status</th>
+                <th className="th"></th>
               </tr>
             </thead>
             <tbody>
               {channels.map((c: ChannelOut) => (
-                <tr key={c.id} className="border-t">
-                  <td className="py-2 pr-3 font-medium">{c.display_label}</td>
-                  <td className="py-2 pr-3">{c.channel_type}</td>
-                  <td className="py-2 pr-3 font-mono text-xs">{c.smtp_host}:{c.smtp_port}</td>
-                  <td className="py-2 pr-3 font-mono text-xs">{c.imap_host ? `${c.imap_host}:${c.imap_port}` : "—"}</td>
-                  <td className="py-2 pr-3">{c.sent_today}/{c.daily_cap}</td>
-                  <td className="py-2 pr-3">{c.status}</td>
-                  <td className="py-2">
+                <tr key={c.id} className="border-t border-slate-100">
+                  <td className="td font-medium">{c.display_label}</td>
+                  <td className="td">{c.channel_type}</td>
+                  <td className="td font-mono text-xs">{c.smtp_host}:{c.smtp_port}</td>
+                  <td className="td font-mono text-xs">{c.imap_host ? `${c.imap_host}:${c.imap_port}` : "—"}</td>
+                  <td className="td">{c.sent_today}/{c.daily_cap}</td>
+                  <td className="td">
+                    <span className={c.status === "active" || c.status === "connected" ? "badge-green" : c.status === "invalid" || c.status === "error" ? "badge-rose" : c.status === "pending" ? "badge-amber" : "badge-slate"}>{c.status}</span>
+                  </td>
+                  <td className="td">
                     <button
                       onClick={() => { if (confirm(`Delete "${c.display_label}"?`)) deleteMut.mutate(c.id); }}
                       className="text-rose-600 hover:underline text-xs"
@@ -444,6 +455,7 @@ export default function Channels() {
             </tbody>
           </table>
         )}
+        </div>
       </section>
     </div>
   );

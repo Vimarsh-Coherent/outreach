@@ -36,6 +36,16 @@ const KIND_STYLE: Record<string, string> = {
   skipped: "border-l-slate-300 bg-slate-50",
 };
 
+const KIND_BADGE: Record<string, string> = {
+  sent: "badge-slate",
+  delivered: "badge-green",
+  reply: "badge-brand",
+  auto_reply: "badge-amber",
+  bounce: "badge-rose",
+  error: "badge-rose",
+  skipped: "badge-slate",
+};
+
 const SENTIMENT_COLOR: Record<string, string> = {
   positive: "text-emerald-700",
   interested: "text-emerald-600",
@@ -61,10 +71,10 @@ export default function Timeline() {
   const l = data.lead;
   return (
     <div className="space-y-6 max-w-4xl">
-      <div className="text-sm"><Link to="/dashboard" className="text-sky-600 hover:underline">← Dashboard</Link></div>
-      <div className="rounded border bg-white p-4 flex items-center justify-between">
+      <div className="text-sm"><Link to="/dashboard" className="btn-ghost btn-sm">← Dashboard</Link></div>
+      <div className="card card-pad flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold">{[l.first_name, l.last_name].filter(Boolean).join(" ") || l.email || "(unknown lead)"}</h2>
+          <h2 className="page-title">{[l.first_name, l.last_name].filter(Boolean).join(" ") || l.email || "(unknown lead)"}</h2>
           <div className="text-sm text-slate-500 mt-1">
             {l.title ? <span className="mr-2">{l.title}</span> : null}
             {l.company ? <span className="mr-2">@ {l.company}</span> : null}
@@ -74,13 +84,13 @@ export default function Timeline() {
         <button
           onClick={() => setDrafting(true)}
           disabled={!l.email}
-          className="border rounded px-3 py-1.5 text-sm bg-violet-600 text-white hover:bg-violet-700 disabled:bg-slate-300"
+          className="btn-primary"
         >
           Draft AI follow-up
         </button>
       </div>
 
-      <div className="rounded border bg-white p-4">
+      <div className="card card-pad">
         <h3 className="font-semibold mb-2">Enrolments</h3>
         {data.enrolments.length === 0 ? (
           <p className="text-sm text-slate-500">Not in any sequence yet.</p>
@@ -90,7 +100,7 @@ export default function Timeline() {
               <li key={e.id}>
                 <Link to={`/sequences/${e.sequence_id}`} className="text-sky-700 hover:underline">{e.sequence_name}</Link>
                 {" — "}
-                <span className="text-xs px-1.5 py-0.5 rounded bg-slate-100">{e.status}</span>
+                <span className="badge-slate">{e.status}</span>
                 {e.stopped_reason && <span className="text-xs text-slate-500 ml-2 font-mono">{e.stopped_reason}</span>}
               </li>
             ))}
@@ -98,7 +108,7 @@ export default function Timeline() {
         )}
       </div>
 
-      <div className="rounded border bg-white p-4">
+      <div className="card card-pad">
         <h3 className="font-semibold mb-3">Conversation ({data.items.length})</h3>
         {data.items.length === 0 ? (
           <p className="text-sm text-slate-500">No activity yet.</p>
@@ -108,7 +118,7 @@ export default function Timeline() {
               <li key={idx} className={`border-l-4 rounded-r p-3 ${KIND_STYLE[item.kind] ?? "border-l-slate-300 bg-slate-50"}`}>
                 <div className="flex items-center justify-between mb-1">
                   <div className="text-xs font-semibold uppercase tracking-wide">
-                    {item.kind}
+                    <span className={KIND_BADGE[item.kind] ?? "badge-slate"}>{item.kind}</span>
                     {item.step_order ? ` · step ${item.step_order}` : ""}
                     {item.channel ? ` · ${item.channel}` : ""}
                   </div>
