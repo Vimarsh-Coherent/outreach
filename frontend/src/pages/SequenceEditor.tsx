@@ -319,6 +319,7 @@ export default function SequenceEditor() {
                 <option value="email">Email</option>
                 <option value="linkedin_dm">LinkedIn DM</option>
                 <option value="linkedin_connect">LinkedIn connect (note)</option>
+                <option value="whatsapp">WhatsApp DM</option>
               </select>
             </label>
             <label className="col-span-4"><span className="block text-slate-600 mb-1">Delay days</span>

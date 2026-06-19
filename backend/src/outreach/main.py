@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from outreach.api import (
     routes_ai_sequences,
+    routes_analytics,
     routes_channels,
     routes_dashboard,
     routes_enrolments,
@@ -66,3 +67,4 @@ app.include_router(routes_followups.router)
 app.include_router(routes_extension.router)
 app.include_router(routes_watchdog.router)
 app.include_router(routes_whatsapp.router)
+app.include_router(routes_analytics.router)

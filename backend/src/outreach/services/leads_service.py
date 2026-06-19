@@ -158,76 +158,53 @@ async def list_leads_enriched(
 
     lead_ids = [lead.id for lead in leads]
 
-    # Subquery: latest reply event id per lead — pick by occurred_at so the
-    # most-recent inbound timestamp wins, not the highest auto-increment id.
-    # Also exclude events where the "from" payload matches the lead's own email
-    # (naman's reply-to-reply would otherwise show up as the lead's latest reply).
-    latest_reply_sq = (
-        select(
-            Enrolment.lead_id.label("lead_id"),
-            func.max(Event.occurred_at).label("max_occurred_at"),
-        )
-        .join(Event, Event.enrolment_id == Enrolment.id)
-        .join(Lead, Lead.id == Enrolment.lead_id)
-        .where(
-            Event.event_type == "reply",
-            Enrolment.lead_id.in_(lead_ids),
-            # Only count events where the sender is the lead (not the outreach user)
-            Event.payload["from"].as_string() == Lead.email,
-        )
-        .group_by(Enrolment.lead_id)
-        .subquery()
-    )
+    from sqlalchemy import text as _text
 
-    # Join back to get the event id for that max timestamp
-    latest_event_sq = (
-        select(
-            Enrolment.lead_id.label("lead_id"),
-            func.max(Event.id).label("event_id"),
-        )
-        .join(Event, Event.enrolment_id == Enrolment.id)
-        .join(Lead, Lead.id == Enrolment.lead_id)
-        .join(
-            latest_reply_sq,
-            (latest_reply_sq.c.lead_id == Enrolment.lead_id)
-            & (Event.occurred_at == latest_reply_sq.c.max_occurred_at),
-        )
-        .where(
-            Event.event_type == "reply",
-            Enrolment.lead_id.in_(lead_ids),
-            Event.payload["from"].as_string() == Lead.email,
-        )
-        .group_by(Enrolment.lead_id)
-        .subquery()
-    )
+    # Fetch the latest reply per (lead, channel) in one query using DISTINCT ON.
+    # Email replies are filtered to only count messages FROM the lead (not echoes
+    # of the outreach user's own replies). LinkedIn and WhatsApp replies are always
+    # from the lead side so no from-filter is needed.
+    reply_rows = (await session.execute(_text("""
+        SELECT DISTINCT ON (en.lead_id, ev.channel)
+            en.lead_id,
+            ev.channel,
+            ev.id          AS event_id,
+            ev.occurred_at,
+            ev.payload,
+            rs.label,
+            rs.confidence,
+            rs.reasoning
+        FROM outreach.enrolments en
+        JOIN outreach.events ev  ON ev.enrolment_id = en.id
+        JOIN outreach.leads  l   ON l.id = en.lead_id
+        LEFT JOIN outreach.reply_sentiment rs ON rs.event_id = ev.id
+        WHERE ev.event_type = 'reply'
+          AND en.lead_id = ANY(:lead_ids)
+          AND (
+              (ev.channel = 'email' AND ev.payload->>'from' = l.email)
+              OR ev.channel IN ('linkedin', 'whatsapp')
+          )
+        ORDER BY en.lead_id, ev.channel, ev.occurred_at DESC
+    """), {"lead_ids": lead_ids})).all()
 
-    reply_rows = (await session.execute(
-        select(
-            latest_event_sq.c.lead_id,
-            Event.id,
-            Event.occurred_at,
-            Event.payload,
-            ReplySentiment.label,
-            ReplySentiment.confidence,
-            ReplySentiment.reasoning,
-        )
-        .join(Event, Event.id == latest_event_sq.c.event_id)
-        .outerjoin(ReplySentiment, ReplySentiment.event_id == Event.id)
-    )).all()
+    channel_replies_by_lead: dict[int, dict[str, dict]] = {}
+    latest_by_lead: dict[int, dict] = {}
 
-    reply_by_lead: dict[int, dict] = {}
-    for lead_id_val, ev_id, occurred_at, payload, label, confidence, reasoning in reply_rows:
-        body_text = None
-        if payload:
-            body_text = payload.get("body") or payload.get("snippet") or None
-        reply_by_lead[int(lead_id_val)] = {
+    for lead_id_val, channel, ev_id, occurred_at, payload, label, confidence, reasoning in reply_rows:
+        lid = int(lead_id_val)
+        body_text = (payload.get("body") or payload.get("snippet")) if payload else None
+        entry = {
             "event_id": ev_id,
             "occurred_at": occurred_at,
             "body": body_text,
+            "channel": channel,
             "sentiment_label": label,
             "sentiment_confidence": confidence,
             "sentiment_reasoning": reasoning,
         }
+        channel_replies_by_lead.setdefault(lid, {})[channel] = entry
+        if lid not in latest_by_lead or occurred_at > latest_by_lead[lid]["occurred_at"]:
+            latest_by_lead[lid] = entry
 
     enriched = []
     for lead in leads:
@@ -243,7 +220,8 @@ async def list_leads_enriched(
             "source": lead.source,
             "created_at": lead.created_at,
             "updated_at": lead.updated_at,
-            "latest_reply": reply_by_lead.get(lead.id),
+            "latest_reply": latest_by_lead.get(lead.id),
+            "channel_replies": channel_replies_by_lead.get(lead.id, {}),
         })
     return enriched, int(total)
 

@@ -1,5 +1,6 @@
 import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
+import Analytics from "./pages/Analytics";
 import Channels from "./pages/Channels";
 import Dashboard from "./pages/Dashboard";
 import Enrolments from "./pages/Enrolments";
@@ -22,6 +23,7 @@ const IconSequences = I(<><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 1
 const IconEnrolments = I(<><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></>);
 const IconChannels = I(<><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v0a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2v0" /><rect x="6" y="8" width="12" height="9" rx="2" /></>);
 const IconWatchdog = I(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="m9 12 2 2 4-4" /></>);
+const IconAnalytics = I(<><path d="M3 3v18h18" /><path d="m19 9-5 5-4-4-3 3" /></>);
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", Icon: IconDashboard },
@@ -29,6 +31,7 @@ const NAV = [
   { to: "/sequences", label: "Sequences", Icon: IconSequences },
   { to: "/enrolments", label: "Enrolments", Icon: IconEnrolments },
   { to: "/channels", label: "Channels", Icon: IconChannels },
+  { to: "/analytics", label: "Data Analytics", Icon: IconAnalytics },
   { to: "/watchdog", label: "Watchdog", Icon: IconWatchdog },
 ];
 
@@ -38,6 +41,7 @@ const TITLES: Record<string, string> = {
   "/sequences": "Sequences",
   "/enrolments": "Enrolments",
   "/channels": "Channels",
+  "/analytics": "Data Analytics",
   "/watchdog": "Watchdog",
 };
 
@@ -123,6 +127,7 @@ export default function App() {
             <Route path="/sequences/:id" element={<SequenceEditor />} />
             <Route path="/enrolments" element={<Enrolments />} />
             <Route path="/channels" element={<Channels />} />
+            <Route path="/analytics" element={<Analytics />} />
             <Route path="/watchdog" element={<Watchdog />} />
           </Routes>
         </main>

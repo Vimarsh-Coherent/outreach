@@ -20,6 +20,7 @@ class LatestReplyOut(BaseModel):
     event_id: int
     occurred_at: datetime
     body: str | None
+    channel: str = "email"
     sentiment_label: str | None
     sentiment_confidence: float | None
     sentiment_reasoning: str | None
@@ -38,6 +39,7 @@ class LeadOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     latest_reply: LatestReplyOut | None = None
+    channel_replies: dict[str, LatestReplyOut] = Field(default_factory=dict)
 
 
 class LeadListResponse(BaseModel):

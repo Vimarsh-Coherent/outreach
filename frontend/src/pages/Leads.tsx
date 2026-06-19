@@ -32,6 +32,15 @@ function blankMapping(): Record<LeadField, string | null> {
   return Object.fromEntries(LEAD_FIELDS.map(f => [f.key, null])) as Record<LeadField, string | null>;
 }
 
+// ─── Channel reply meta ───────────────────────────────────────────────────────
+
+const CHANNEL_REPLY_META: Record<string, { icon: string; label: string }> = {
+  email:    { icon: "📧", label: "Email" },
+  linkedin: { icon: "💬", label: "LinkedIn" },
+  whatsapp: { icon: "💚", label: "WhatsApp" },
+};
+const CHANNEL_ORDER = ["email", "linkedin", "whatsapp"];
+
 // ─── Sentiment badge ──────────────────────────────────────────────────────────
 
 const SENTIMENT_COLORS: Record<string, string> = {
@@ -68,8 +77,9 @@ function timeAgo(iso: string): string {
 
 // ─── Reply modal ─────────────────────────────────────────────────────────────
 
-function ReplyModal({ lead, onClose }: { lead: LeadOut; onClose: () => void }) {
-  const reply = lead.latest_reply as LatestReply;
+function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string; onClose: () => void }) {
+  const reply = (lead.channel_replies?.[channel] ?? lead.latest_reply) as LatestReply;
+  const channelMeta = CHANNEL_REPLY_META[channel] ?? { icon: "💬", label: channel };
   const [tab, setTab] = useState<"email" | "linkedin">("email");
 
   // Email draft state
@@ -159,7 +169,7 @@ function ReplyModal({ lead, onClose }: { lead: LeadOut; onClose: () => void }) {
         <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b shrink-0">
           <div>
             <h2 className="font-semibold text-slate-900 text-lg">Reply from {leadName}</h2>
-            <p className="text-xs text-slate-500 mt-0.5">{lead.email} · {lead.company || "—"}</p>
+            <p className="text-xs text-slate-500 mt-0.5">{channelMeta.icon} {channelMeta.label} · {lead.email} · {lead.company || "—"}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
         </div>
@@ -385,6 +395,7 @@ export default function Leads() {
 
   // Reply modal
   const [replyLead, setReplyLead] = useState<LeadOut | null>(null);
+  const [replyChannel, setReplyChannel] = useState<string>("email");
 
   const manualMut = useMutation({
     mutationFn: async () => {
@@ -436,7 +447,7 @@ export default function Leads() {
 
   return (
     <div className="space-y-8 max-w-6xl">
-      {replyLead && <ReplyModal lead={replyLead} onClose={() => setReplyLead(null)} />}
+      {replyLead && <ReplyModal lead={replyLead} channel={replyChannel} onClose={() => setReplyLead(null)} />}
 
       <div>
         <h2 className="text-2xl font-semibold">Leads</h2>
@@ -628,17 +639,26 @@ export default function Leads() {
                       <td className="py-2 pr-3">{l.linkedin_url ? <a className="text-sky-600 hover:underline text-xs" href={l.linkedin_url} target="_blank" rel="noreferrer">profile</a> : "—"}</td>
                       <td className="py-2 pr-3 text-xs text-slate-500">{l.source}</td>
                       <td className="py-2 pr-3">
-                        {l.latest_reply ? (
-                          <button
-                            onClick={() => setReplyLead(l)}
-                            className="flex items-center gap-1.5 group"
-                            title={l.latest_reply.body?.slice(0, 100) ?? "View reply"}
-                          >
-                            <SentimentBadge label={l.latest_reply.sentiment_label} size="xs" />
-                            <span className="text-xs text-slate-400 group-hover:text-slate-600">
-                              {timeAgo(l.latest_reply.occurred_at)}
-                            </span>
-                          </button>
+                        {Object.keys(l.channel_replies ?? {}).length > 0 ? (
+                          <div className="flex flex-col gap-1">
+                            {CHANNEL_ORDER.map(ch => {
+                              const r = l.channel_replies?.[ch];
+                              if (!r) return null;
+                              const meta = CHANNEL_REPLY_META[ch];
+                              return (
+                                <button
+                                  key={ch}
+                                  onClick={() => { setReplyChannel(ch); setReplyLead(l); }}
+                                  className="flex items-center gap-1 group text-left"
+                                  title={r.body?.slice(0, 100) ?? "View reply"}
+                                >
+                                  <span className="text-xs">{meta.icon}</span>
+                                  <SentimentBadge label={r.sentiment_label} size="xs" />
+                                  <span className="text-xs text-slate-400 group-hover:text-slate-600">{timeAgo(r.occurred_at)}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
                         ) : (
                           <span className="text-slate-300 text-xs">—</span>
                         )}

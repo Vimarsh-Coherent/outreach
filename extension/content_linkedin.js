@@ -1409,7 +1409,25 @@
   const seenMessageIds = new Set();
   async function scanInbox() {
     if (!location.pathname.startsWith('/messaging/')) return;
-    const items = Array.from(document.querySelectorAll('li.msg-conversation-listitem, li[data-test-conversation-listitem]'));
+
+    // Strategy 1: known container selectors (LinkedIn changes these periodically)
+    let items = Array.from(document.querySelectorAll(
+      'li.msg-conversation-listitem, li[data-test-conversation-listitem], ' +
+      '[data-view-name="messaging-conversation-list-item"]'
+    ));
+
+    // Strategy 2: walk up from thread links to find conversation containers
+    if (items.length === 0) {
+      const threadLinks = document.querySelectorAll('a[href*="/messaging/thread/"]');
+      const seen = new Set();
+      for (const a of threadLinks) {
+        let el = a.parentElement;
+        while (el && el.tagName !== 'LI') el = el.parentElement;
+        if (el && !seen.has(el)) { seen.add(el); items.push(el); }
+      }
+    }
+
+    LOG(`scanInbox: found ${items.length} conversation items`);
     const replies = [];
     for (const li of items.slice(0, 10)) {
       const link = li.querySelector('a[href*="/messaging/thread/"]');
@@ -1418,17 +1436,29 @@
       if (!thread_id) continue;
       const liUrl = li.querySelector('a[href*="/in/"]')?.getAttribute('href');
       if (!liUrl) continue;
-      const snippet = li.querySelector('.msg-conversation-card__message-snippet, [data-test-conversation-snippet]')?.innerText || '';
+      const snippet = (
+        li.querySelector('.msg-conversation-card__message-snippet')?.innerText ||
+        li.querySelector('[data-test-conversation-snippet]')?.innerText ||
+        li.querySelector('.msg-overview-v2__message-snippet')?.innerText ||
+        li.querySelector('p')?.innerText ||
+        ''
+      ).trim();
       const message_id = `li:${thread_id}:${snippet.slice(0, 80)}`;
       if (seenMessageIds.has(message_id)) continue;
       seenMessageIds.add(message_id);
+      const from_name = (
+        li.querySelector('.msg-conversation-card__participant-names')?.innerText ||
+        li.querySelector('[data-test-conversation-participant-name]')?.innerText ||
+        li.querySelector('.artdeco-entity-lockup__title')?.innerText ||
+        null
+      );
       replies.push({
         li_url: `https://www.linkedin.com${liUrl}`,
         thread_id,
         message_id,
         body: snippet,
         received_at: new Date().toISOString(),
-        from_name: li.querySelector('.msg-conversation-card__participant-names, [data-test-conversation-participant-name]')?.innerText || null,
+        from_name,
       });
     }
     if (replies.length > 0) {
