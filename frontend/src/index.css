@@ -9,6 +9,10 @@
     @apply font-sans text-slate-600 bg-slate-50 antialiased;
   }
   h1, h2, h3, h4 { @apply text-slate-900; }
+  /* Remove focus outline from Recharts SVG elements */
+  .recharts-wrapper svg,
+  .recharts-wrapper svg *,
+  .recharts-surface { outline: none !important; }
 }
 
 /* Reusable production-grade primitives — keeps page markup clean + consistent. */

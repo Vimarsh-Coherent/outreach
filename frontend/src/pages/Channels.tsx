@@ -16,6 +16,7 @@ import {
   getWhatsAppStatus,
   listChannels,
   logoutWhatsApp,
+  requestWaPairingCode,
   testEmailChannel,
 } from "../api/channels";
 
@@ -67,6 +68,20 @@ function WhatsAppCard() {
   const [label, setLabel] = useState("WhatsApp");
   const [cap, setCap] = useState(100);
   const [waError, setWaError] = useState<string | null>(null);
+  // PAIRING CODE FEATURE — remove this block to disable phone-number linking
+  const [pairMode, setPairMode] = useState<"qr" | "phone">("qr");
+  const [pairPhone, setPairPhone] = useState("");
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairLoading, setPairLoading] = useState(false);
+  async function handleRequestCode() {
+    if (!pairPhone.trim()) return;
+    setPairLoading(true); setPairCode(null); setWaError(null);
+    const res = await requestWaPairingCode(pairPhone.trim());
+    setPairLoading(false);
+    if (res.ok && res.code) setPairCode(res.code);
+    else setWaError(res.error || "Failed to get pairing code");
+  }
+  // END PAIRING CODE FEATURE
 
   const { data: status } = useQuery({
     queryKey: ["wa-status"],
@@ -126,15 +141,64 @@ function WhatsAppCard() {
       )}
 
       {!connected && state !== "unavailable" && (
-        <div className="flex flex-col items-center gap-3 py-2">
-          {qr?.qr ? (
-            <img src={qr.qr} alt="WhatsApp QR" className="w-56 h-56 border rounded bg-white" />
+        <div className="flex flex-col items-center gap-4 py-2">
+          {/* PAIRING CODE FEATURE — remove this toggle + phone block to disable */}
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1 text-sm">
+            <button onClick={() => { setPairMode("qr"); setPairCode(null); }}
+              className={`px-4 py-1.5 rounded font-medium transition-colors ${pairMode === "qr" ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+              Scan QR code
+            </button>
+            <button onClick={() => { setPairMode("phone"); }}
+              className={`px-4 py-1.5 rounded font-medium transition-colors ${pairMode === "phone" ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+              Link with phone number
+            </button>
+          </div>
+
+          {pairMode === "qr" ? (
+            <>
+              {qr?.qr ? (
+                <img src={qr.qr} alt="WhatsApp QR" className="w-56 h-56 border rounded bg-white" />
+              ) : (
+                <div className="w-56 h-56 border rounded bg-slate-50 flex items-center justify-center text-sm text-slate-400">
+                  Waiting for QR…
+                </div>
+              )}
+              <p className="text-xs text-slate-500">Open WhatsApp → Settings → Linked Devices → Link a device → scan this code.</p>
+            </>
           ) : (
-            <div className="w-56 h-56 border rounded bg-slate-50 flex items-center justify-center text-sm text-slate-400">
-              {state === "logged_out" ? "Generating fresh QR…" : "Waiting for QR…"}
+            <div className="w-full max-w-sm space-y-3">
+              <p className="text-xs text-slate-500 text-center">
+                Enter your WhatsApp number. You'll get an 8-digit code to enter on your phone:<br />
+                <span className="font-medium">WhatsApp → Settings → Linked Devices → Link with phone number</span>
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="tel"
+                  placeholder="+91 98765 43210"
+                  value={pairPhone}
+                  onChange={e => setPairPhone(e.target.value)}
+                  className="flex-1 border rounded px-3 py-2 text-sm"
+                />
+                <button
+                  onClick={handleRequestCode}
+                  disabled={pairLoading || !pairPhone.trim()}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded text-sm font-medium hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {pairLoading ? "…" : "Get code"}
+                </button>
+              </div>
+              {pairCode && (
+                <div className="text-center py-3 bg-slate-50 border rounded-lg">
+                  <div className="text-xs text-slate-500 mb-1">Enter this code on your phone</div>
+                  <div className="text-3xl font-mono font-bold tracking-widest text-slate-800 select-all">
+                    {pairCode.slice(0, 4)}-{pairCode.slice(4)}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">Code expires in ~60 seconds</div>
+                </div>
+              )}
             </div>
           )}
-          <p className="text-xs text-slate-500">The code refreshes automatically until you scan it.</p>
+          {/* END PAIRING CODE FEATURE */}
         </div>
       )}
 
@@ -425,22 +489,45 @@ export default function Channels() {
               </tr>
             </thead>
             <tbody>
-              {channels.map((c: ChannelOut) => (
-                <tr key={c.id} className="border-t">
-                  <td className="py-2 pr-3 font-medium">{c.display_label}</td>
-                  <td className="py-2 pr-3">{c.channel_type}</td>
-                  <td className="py-2 pr-3 font-mono text-xs">{c.smtp_host}:{c.smtp_port}</td>
-                  <td className="py-2 pr-3 font-mono text-xs">{c.imap_host ? `${c.imap_host}:${c.imap_port}` : "—"}</td>
-                  <td className="py-2 pr-3">{c.sent_today}/{c.daily_cap}</td>
-                  <td className="py-2 pr-3">{c.status}</td>
-                  <td className="py-2">
-                    <button
-                      onClick={() => { if (confirm(`Delete "${c.display_label}"?`)) deleteMut.mutate(c.id); }}
-                      className="text-rose-600 hover:underline text-xs"
-                    >delete</button>
-                  </td>
-                </tr>
-              ))}
+              {channels.map((c: ChannelOut) => {
+                const isWa = c.channel_type === "whatsapp";
+                const isPhone = isWa && /^[+\d\s\-()]{7,}$/.test(c.display_label.trim());
+                const primaryLabel = isPhone ? "WhatsApp" : c.display_label;
+                const subLabel = isPhone ? c.display_label : null;
+                const typeLabel = isWa ? "WhatsApp" : "Email";
+                const typeCls = isWa
+                  ? "bg-green-50 text-green-700 border-green-200"
+                  : "bg-blue-50 text-blue-700 border-blue-200";
+                return (
+                  <tr key={c.id} className="border-t">
+                    <td className="py-2 pr-3">
+                      <div className="font-medium text-slate-800">{primaryLabel}</div>
+                      {subLabel && <div className="text-xs text-slate-400 mt-0.5">{subLabel}</div>}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${typeCls}`}>
+                        {typeLabel}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs text-slate-500">{c.smtp_host ? `${c.smtp_host}:${c.smtp_port}` : "—"}</td>
+                    <td className="py-2 pr-3 font-mono text-xs text-slate-500">{c.imap_host ? `${c.imap_host}:${c.imap_port}` : "—"}</td>
+                    <td className="py-2 pr-3">{c.sent_today}/{c.daily_cap}</td>
+                    <td className="py-2 pr-3">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
+                        c.status === "active"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-slate-100 text-slate-500 border-slate-200"
+                      }`}>{c.status}</span>
+                    </td>
+                    <td className="py-2">
+                      <button
+                        onClick={() => { if (confirm(`Delete "${primaryLabel}"?`)) deleteMut.mutate(c.id); }}
+                        className="text-rose-600 hover:underline text-xs"
+                      >delete</button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

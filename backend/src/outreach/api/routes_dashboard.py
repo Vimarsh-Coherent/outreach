@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 @router.get("/summary", response_model=DashboardSummary)
 async def get_summary(
-    days: int = Query(default=30, ge=1, le=365),
+    days: int = Query(default=30, ge=0, le=36500),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> DashboardSummary:
@@ -29,7 +29,7 @@ async def get_summary(
 
 @router.get("/sentiment-timeseries", response_model=SentimentTimeseriesResponse)
 async def get_sentiment_timeseries(
-    days: int = Query(default=30, ge=1, le=365),
+    days: int = Query(default=30, ge=0, le=36500),
     bucket: Literal["day", "week"] = "day",
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -41,7 +41,7 @@ async def get_sentiment_timeseries(
 
 @router.get("/sequences", response_model=list[SequenceStats])
 async def get_sequences_stats(
-    days: int = Query(default=30, ge=1, le=365),
+    days: int = Query(default=30, ge=0, le=36500),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[SequenceStats]:
@@ -50,7 +50,7 @@ async def get_sequences_stats(
 
 @router.get("/hot-leads", response_model=list[HotLead])
 async def get_hot_leads(
-    days: int = Query(default=7, ge=1, le=90),
+    days: int = Query(default=7, ge=0, le=36500),
     limit: int = Query(default=25, ge=1, le=200),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),

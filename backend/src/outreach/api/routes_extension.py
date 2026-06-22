@@ -639,17 +639,38 @@ async def report_replies(
     duplicates = 0
     spawned: list[int] = []
     for item in items:
-        # Match enrolment for this user by linkedin slug (format-independent —
-        # see _li_slug above for why exact URL equality never matched).
-        slug = _li_slug(item.li_url)
-        if not slug:
+        # Skip outbound snippets — LinkedIn prefixes them with "You:" in the inbox list
+        if (item.body or "").lstrip().lower().startswith("you:"):
             continue
-        enrolment = await session.scalar(
-            select(Enrolment).where(
-                Enrolment.user_id == channel.user_id,
-                _enrolment_li_url_matches(slug),
-            ).order_by(Enrolment.id.desc()).limit(1)
-        )
+        # Primary match: linkedin slug extracted from li_url
+        slug = _li_slug(item.li_url)
+        enrolment = None
+        if slug:
+            enrolment = await session.scalar(
+                select(Enrolment).where(
+                    Enrolment.user_id == channel.user_id,
+                    _enrolment_li_url_matches(slug),
+                ).order_by(Enrolment.id.desc()).limit(1)
+            )
+
+        # Fallback: match by from_name (first + last) when profile URL unavailable
+        if enrolment is None and item.from_name:
+            name_parts = item.from_name.strip().split()
+            if name_parts:
+                first = name_parts[0].lower()
+                last = name_parts[-1].lower() if len(name_parts) > 1 else None
+                q = select(Enrolment).where(
+                    Enrolment.user_id == channel.user_id,
+                    func.lower(Enrolment.contact_snapshot["first_name"].astext) == first,
+                )
+                if last and last != first:
+                    q = q.where(
+                        func.lower(Enrolment.contact_snapshot["last_name"].astext) == last
+                    )
+                enrolment = await session.scalar(q.order_by(Enrolment.id.desc()).limit(1))
+                if enrolment:
+                    log.info("linkedin reply matched by name '%s' (no profile URL)", item.from_name)
+
         if enrolment is None:
             continue
         matched += 1

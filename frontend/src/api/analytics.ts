@@ -29,6 +29,7 @@ export interface AnalyticsResponse {
 export async function fetchMessages(params: {
   channel?: string;
   direction?: string;
+  days?: number;
   limit?: number;
   offset?: number;
 }): Promise<AnalyticsResponse> {

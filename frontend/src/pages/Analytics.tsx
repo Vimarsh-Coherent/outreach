@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import { type AnalyticsMessage, fetchMessages, type AnalyticsStats } from "../api/analytics";
+import { DateRangeSelect } from "../components/DateRangeSelect";
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 function timeAgo(iso: string | null): string {
@@ -48,6 +50,133 @@ function SentimentBadge({ label }: { label: string | null }) {
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium border ${cls} capitalize`}>
       {label}
     </span>
+  );
+}
+
+/* ── visualization modal ─────────────────────────────────────────────────── */
+const VIZ_PALETTE = [
+  "#6366f1", "#a5b4fc",   // email sent / received
+  "#0ea5e9", "#7dd3fc",   // linkedin sent / received
+  "#10b981", "#6ee7b7",   // whatsapp sent / received
+];
+
+function VizModal({ stats, onClose }: { stats: AnalyticsStats; onClose: () => void }) {
+  const segments: { name: string; value: number; color: string }[] = [];
+  const channels = [
+    { key: "email",       label: "Email",    si: 0 },
+    { key: "linkedin_dm", label: "LinkedIn", si: 2 },
+    { key: "whatsapp",    label: "WhatsApp", si: 4 },
+  ];
+  for (const { key, label, si } of channels) {
+    const s = stats[key];
+    if (s?.sent)     segments.push({ name: `${label} Sent`,     value: s.sent,     color: VIZ_PALETTE[si] });
+    if (s?.received) segments.push({ name: `${label} Received`, value: s.received, color: VIZ_PALETTE[si + 1] });
+  }
+  const total = segments.reduce((a, s) => a + s.value, 0);
+
+  const totalSent     = channels.reduce((a, { key }) => a + (stats[key]?.sent     ?? 0), 0);
+  const totalReceived = channels.reduce((a, { key }) => a + (stats[key]?.received ?? 0), 0);
+  const sentPct     = total ? Math.round((totalSent / total) * 100) : 0;
+  const receivedPct = total ? 100 - sentPct : 0;
+
+  const renderLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: {
+    cx: number; cy: number; midAngle: number; innerRadius: number; outerRadius: number; percent: number;
+  }) => {
+    if (percent < 0.04) return null;
+    const RADIAN = Math.PI / 180;
+    const r = innerRadius + (outerRadius - innerRadius) * 0.55;
+    const x = cx + r * Math.cos(-midAngle * RADIAN);
+    const y = cy + r * Math.sin(-midAngle * RADIAN);
+    return (
+      <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central"
+        fontSize={11} fontWeight={600}>
+        {`${Math.round(percent * 100)}%`}
+      </text>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 p-6 flex flex-col gap-5"
+        onClick={e => e.stopPropagation()}>
+
+        {/* header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-800">Message Breakdown</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{total} total messages across all channels</p>
+          </div>
+          <button onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 text-xl leading-none px-1">✕</button>
+        </div>
+
+        {/* summary badges */}
+        <div className="flex gap-3">
+          <div className="flex-1 rounded-xl bg-indigo-50 border border-indigo-100 px-4 py-3 text-center">
+            <div className="text-2xl font-bold text-indigo-600">{sentPct}%</div>
+            <div className="text-xs text-indigo-400 mt-0.5">Sent by us</div>
+            <div className="text-xs text-slate-400">{totalSent} messages</div>
+          </div>
+          <div className="flex-1 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-center">
+            <div className="text-2xl font-bold text-emerald-600">{receivedPct}%</div>
+            <div className="text-xs text-emerald-400 mt-0.5">Received</div>
+            <div className="text-xs text-slate-400">{totalReceived} messages</div>
+          </div>
+        </div>
+
+        {/* pie chart */}
+        {segments.length > 0 ? (
+          <>
+            <div className="flex justify-center" style={{ outline: "none" }}>
+              <PieChart width={280} height={220} style={{ outline: "none" }}>
+                <Pie
+                  data={segments}
+                  cx={135}
+                  cy={105}
+                  innerRadius={55}
+                  outerRadius={100}
+                  paddingAngle={2}
+                  dataKey="value"
+                  labelLine={false}
+                  label={renderLabel}
+                  stroke="none"
+                  style={{ outline: "none", cursor: "default" }}
+                >
+                  {segments.map((s, i) => (
+                    <Cell key={i} fill={s.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(value: number, name: string) => [
+                    `${value} (${total ? Math.round((value / total) * 100) : 0}%)`, name
+                  ]}
+                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                />
+              </PieChart>
+            </div>
+
+            {/* custom legend — fully separate from chart */}
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 pt-2 border-t border-slate-100">
+              {segments.map((s) => (
+                <div key={s.name} className="flex items-center gap-2 min-w-0">
+                  <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+                  <span className="text-xs text-slate-600 truncate">{s.name}</span>
+                  <span className="ml-auto text-xs font-semibold text-slate-700 shrink-0">
+                    {s.value}
+                    <span className="text-slate-400 font-normal ml-1">
+                      ({total ? Math.round((s.value / total) * 100) : 0}%)
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="text-center text-slate-400 text-sm py-8">No data yet</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -206,22 +335,24 @@ const PAGE_SIZE = 50;
 export default function Analytics() {
   const [channel, setChannel] = useState("all");
   const [direction, setDirection] = useState("all");
+  const [days, setDays] = useState(30);
   const [page, setPage] = useState(0);
   const [data, setData] = useState<{ items: AnalyticsMessage[]; total: number; stats: AnalyticsStats } | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showViz, setShowViz] = useState(false);
 
   useEffect(() => {
     setPage(0);
     setExpandedId(null);
-  }, [channel, direction]);
+  }, [channel, direction, days]);
 
   useEffect(() => {
     setLoading(true);
-    fetchMessages({ channel, direction, limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+    fetchMessages({ channel, direction, days, limit: PAGE_SIZE, offset: page * PAGE_SIZE })
       .then(setData)
       .finally(() => setLoading(false));
-  }, [channel, direction, page]);
+  }, [channel, direction, days, page]);
 
   const stats = data?.stats ?? {};
   const totalSent = Object.values(stats).reduce((a, s) => a + s.sent, 0);
@@ -230,14 +361,29 @@ export default function Analytics() {
 
   return (
     <div className="space-y-6">
+      {showViz && data && <VizModal stats={data.stats} onClose={() => setShowViz(false)} />}
+
       {/* header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-800">Data Analytics</h1>
           <p className="text-sm text-slate-500 mt-0.5">All messages sent and received across every channel</p>
         </div>
-        <div className="flex items-center gap-2 text-sm text-slate-500 bg-white rounded-lg border border-slate-200 px-3 py-1.5 shadow-sm">
-          <span className="font-semibold text-slate-700">{totalSent + totalReceived}</span> total messages
+        <div className="flex items-center gap-3">
+          <DateRangeSelect value={days} onChange={setDays} />
+          <button
+            onClick={() => setShowViz(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm font-medium hover:bg-indigo-100 transition-colors shadow-sm"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+              <path d="M11 11V3a1 1 0 0 1 1-1h0a9 9 0 0 1 9 9v0a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1z" />
+              <path d="M11 13v8a9 9 0 0 1-9-9h8a1 1 0 0 1 1 1z" />
+            </svg>
+            Visualization
+          </button>
+          <div className="flex items-center gap-2 text-sm text-slate-500 bg-white rounded-lg border border-slate-200 px-3 py-1.5 shadow-sm">
+            <span className="font-semibold text-slate-700">{totalSent + totalReceived}</span> total messages
+          </div>
         </div>
       </div>
 

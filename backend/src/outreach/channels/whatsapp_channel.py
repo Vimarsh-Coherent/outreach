@@ -78,6 +78,23 @@ async def get_qr() -> dict:
         return {"state": "unavailable", "qr": None}
 
 
+# PAIRING CODE FEATURE — remove this function to disable phone-number linking
+async def request_pairing_code(phone: str) -> dict:
+    """POST /requestPairingCode → {ok, code}. Phone should be digits only."""
+    base, headers, timeout = _base_and_headers()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                f"{base}/requestPairingCode",
+                json={"phone": phone},
+                headers=headers,
+            )
+        return resp.json() if resp.content else {"ok": False, "error": f"HTTP {resp.status_code}"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+# END PAIRING CODE FEATURE
+
+
 async def logout() -> dict:
     """POST /logout → wipe the session so a fresh QR is generated."""
     base, headers, timeout = _base_and_headers()

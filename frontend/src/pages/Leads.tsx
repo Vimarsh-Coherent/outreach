@@ -14,7 +14,7 @@ import {
   listLeads,
   previewUpload,
 } from "../api/leads";
-import { DraftResponse, SendResponse, draftFollowup, sendFollowup } from "../api/followups";
+import { DraftResponse, SendResponse, draftFollowup, sendFollowup, sendLinkedInDm } from "../api/followups";
 
 const LEAD_FIELDS: { key: LeadField; label: string; required?: boolean }[] = [
   { key: "email", label: "Email" },
@@ -34,10 +34,10 @@ function blankMapping(): Record<LeadField, string | null> {
 
 // ─── Channel reply meta ───────────────────────────────────────────────────────
 
-const CHANNEL_REPLY_META: Record<string, { icon: string; label: string }> = {
-  email:    { icon: "📧", label: "Email" },
-  linkedin: { icon: "💬", label: "LinkedIn" },
-  whatsapp: { icon: "💚", label: "WhatsApp" },
+const CHANNEL_REPLY_META: Record<string, { label: string }> = {
+  email:    { label: "Email" },
+  linkedin: { label: "LinkedIn" },
+  whatsapp: { label: "WhatsApp" },
 };
 const CHANNEL_ORDER = ["email", "linkedin", "whatsapp"];
 
@@ -79,7 +79,7 @@ function timeAgo(iso: string): string {
 
 function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string; onClose: () => void }) {
   const reply = (lead.channel_replies?.[channel] ?? lead.latest_reply) as LatestReply;
-  const channelMeta = CHANNEL_REPLY_META[channel] ?? { icon: "💬", label: channel };
+  const channelMeta = CHANNEL_REPLY_META[channel] ?? { label: channel };
   const [tab, setTab] = useState<"email" | "linkedin">("email");
 
   // Email draft state
@@ -96,6 +96,8 @@ function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string
   const [draftingLi, setDraftingLi] = useState(false);
   const [draftLiErr, setDraftLiErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [sendingLi, setSendingLi] = useState(false);
+  const [sendLiResult, setSendLiResult] = useState<{ ok: boolean; detail: string } | null>(null);
 
   async function generateEmailDraft() {
     setDraftingEmail(true);
@@ -160,6 +162,19 @@ function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string
     });
   }
 
+  async function handleSendLi() {
+    setSendingLi(true);
+    setSendLiResult(null);
+    try {
+      const r = await sendLinkedInDm(lead.id, liMessage);
+      setSendLiResult({ ok: r.ok, detail: r.ok ? "Queued — extension will send it shortly." : "Failed to queue." });
+    } catch {
+      setSendLiResult({ ok: false, detail: "Request failed." });
+    } finally {
+      setSendingLi(false);
+    }
+  }
+
   const leadName = [lead.first_name, lead.last_name].filter(Boolean).join(" ") || lead.email || "Lead";
 
   return (
@@ -169,13 +184,14 @@ function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string
         <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b shrink-0">
           <div>
             <h2 className="font-semibold text-slate-900 text-lg">Reply from {leadName}</h2>
-            <p className="text-xs text-slate-500 mt-0.5">{channelMeta.icon} {channelMeta.label} · {lead.email} · {lead.company || "—"}</p>
+            <p className="text-xs text-slate-500 mt-0.5">{channelMeta.label} · {lead.email} · {lead.company || "—"}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl leading-none">&times;</button>
         </div>
 
         <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
           {/* Reply card */}
+          
           <div className="rounded-lg border bg-slate-50 p-4 space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
               <SentimentBadge label={reply.sentiment_label} />
@@ -324,12 +340,19 @@ function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string
                     />
                     <span className="text-xs text-slate-400">{liMessage.length}/300 chars</span>
                   </label>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={handleSendLi}
+                      disabled={sendingLi || !!sendLiResult?.ok}
+                      className="px-4 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-700 disabled:opacity-60"
+                    >
+                      {sendingLi ? "Sending…" : sendLiResult?.ok ? "Queued!" : "Send via Extension"}
+                    </button>
                     <button
                       onClick={handleCopyLi}
-                      className="px-4 py-1.5 rounded bg-sky-600 text-white text-sm hover:bg-sky-700"
+                      className="px-4 py-1.5 rounded border text-sm text-slate-600 hover:bg-slate-50"
                     >
-                      {copied ? "Copied!" : "Copy Message"}
+                      {copied ? "Copied!" : "Copy"}
                     </button>
                     <a
                       href={lead.linkedin_url}
@@ -337,7 +360,7 @@ function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string
                       rel="noreferrer"
                       className="px-4 py-1.5 rounded border text-sm text-slate-600 hover:bg-slate-50"
                     >
-                      Open LinkedIn Profile ↗
+                      Open Profile ↗
                     </a>
                     <button
                       onClick={generateLinkedInDraft}
@@ -347,9 +370,11 @@ function ReplyModal({ lead, channel, onClose }: { lead: LeadOut; channel: string
                       Regenerate
                     </button>
                   </div>
-                  <p className="text-xs text-slate-400">
-                    Copy the message, open their LinkedIn profile, and paste it into the message box.
-                  </p>
+                  {sendLiResult && (
+                    <p className={`text-xs ${sendLiResult.ok ? "text-emerald-600" : "text-rose-600"}`}>
+                      {sendLiResult.detail}
+                    </p>
+                  )}
                 </>
               )}
             </div>
@@ -640,7 +665,7 @@ export default function Leads() {
                       <td className="py-2 pr-3 text-xs text-slate-500">{l.source}</td>
                       <td className="py-2 pr-3">
                         {Object.keys(l.channel_replies ?? {}).length > 0 ? (
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col gap-1.5">
                             {CHANNEL_ORDER.map(ch => {
                               const r = l.channel_replies?.[ch];
                               if (!r) return null;
@@ -649,12 +674,13 @@ export default function Leads() {
                                 <button
                                   key={ch}
                                   onClick={() => { setReplyChannel(ch); setReplyLead(l); }}
-                                  className="flex items-center gap-1 group text-left"
+                                  className="grid items-center gap-x-2 group text-left hover:bg-slate-50 rounded px-1 -mx-1 py-0.5 transition-colors"
+                                  style={{ gridTemplateColumns: "64px 72px 48px" }}
                                   title={r.body?.slice(0, 100) ?? "View reply"}
                                 >
-                                  <span className="text-xs">{meta.icon}</span>
-                                  <SentimentBadge label={r.sentiment_label} size="xs" />
-                                  <span className="text-xs text-slate-400 group-hover:text-slate-600">{timeAgo(r.occurred_at)}</span>
+                                  <span className="text-xs text-slate-500 truncate">{meta.label}</span>
+                                  <span><SentimentBadge label={r.sentiment_label} size="xs" /></span>
+                                  <span className="text-xs text-slate-400 group-hover:text-slate-600 text-right whitespace-nowrap">{timeAgo(r.occurred_at)}</span>
                                 </button>
                               );
                             })}

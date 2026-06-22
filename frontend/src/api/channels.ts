@@ -134,3 +134,10 @@ export async function logoutWhatsApp(): Promise<{ ok: boolean }> {
   const r = await api.post<{ ok: boolean }>("/channels/whatsapp/logout", {});
   return r.data;
 }
+
+// PAIRING CODE FEATURE — remove this function to disable phone-number linking
+export async function requestWaPairingCode(phone: string): Promise<{ ok: boolean; code?: string; error?: string }> {
+  const r = await api.post("/whatsapp/pairing-code", { phone });
+  return r.data;
+}
+// END PAIRING CODE FEATURE

@@ -39,3 +39,7 @@ export async function draftFollowup(req: DraftRequest): Promise<DraftResponse> {
 export async function sendFollowup(req: SendRequest): Promise<SendResponse> {
   return (await api.post<SendResponse>("/followups/send", req)).data;
 }
+
+export async function sendLinkedInDm(lead_id: number, body: string): Promise<{ ok: boolean; command_id?: number }> {
+  return (await api.post("/followups/send-linkedin", { lead_id, body })).data;
+}

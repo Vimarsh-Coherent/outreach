@@ -35,7 +35,7 @@ class CommandCompleteRequest(BaseModel):
 
 
 class InboundReplyItem(BaseModel):
-    li_url: str = Field(min_length=1, max_length=500)
+    li_url: str | None = Field(default=None, max_length=500)
     thread_id: str | None = Field(default=None, max_length=200)
     message_id: str = Field(min_length=1, max_length=200)
     body: str = Field(default="", max_length=8000)
