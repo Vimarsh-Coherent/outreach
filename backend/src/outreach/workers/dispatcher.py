@@ -423,7 +423,7 @@ async def process_one(claim: dict) -> dict:
         # LinkedIn: mint a li_command, mark step_run as queued_external, leave
         # enrolment paused (next_send_at=NULL) — the extension webhook on
         # /api/extension/commands/{id}/complete will advance it. Per PLAN §7.
-        if step.channel in ("linkedin_dm", "linkedin_connect"):
+        if step.channel in ("linkedin_dm", "linkedin_connect", "linkedin_like"):
             from datetime import timedelta
             from outreach.models.li_command import LinkedInCommand
 
@@ -476,7 +476,11 @@ async def process_one(claim: dict) -> dict:
             # sent SINCE LOCAL MIDNIGHT (calendar-day reset, not a rolling 24h
             # window) — so a new day always starts fresh. At cap, defer to the
             # next day without burning the lead or advancing the step.
-            command_type = "dm" if step.channel == "linkedin_dm" else "connect"
+            command_type = (
+                "dm" if step.channel == "linkedin_dm"
+                else "like_posts" if step.channel == "linkedin_like"
+                else "connect"
+            )
             settings = get_settings()
             type_cap = (
                 settings.li_daily_cap_dm if command_type == "dm"

@@ -11,7 +11,7 @@ class LinkedInCommand(Base):
     __tablename__ = "li_commands"
     __table_args__ = (
         CheckConstraint(
-            "command_type IN ('dm','connect','view_profile')", name="ck_licmd_type"
+            "command_type IN ('dm','connect','view_profile','like_posts')", name="ck_licmd_type"
         ),
         CheckConstraint(
             "status IN ('pending','claimed','done','failed','expired')", name="ck_licmd_status"
@@ -32,7 +32,7 @@ class LinkedInCommand(Base):
     enrolment_id: Mapped[int] = mapped_column(
         ForeignKey(f"{SCHEMA}.enrolments.id", ondelete="CASCADE"), nullable=False
     )
-    step_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.sequence_steps.id"), nullable=False)
+    step_id: Mapped[int | None] = mapped_column(ForeignKey(f"{SCHEMA}.sequence_steps.id"), nullable=True)
     command_type: Mapped[str] = mapped_column(String(20), nullable=False)
     target_li_url: Mapped[str] = mapped_column(Text, nullable=False)
     body_text: Mapped[str | None] = mapped_column(Text)

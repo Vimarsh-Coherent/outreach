@@ -2,7 +2,7 @@
   "start_backend": true,
   "backend_host": "127.0.0.1",
   "backend_port": 8000,
-  "linkedin_url": "https://www.linkedin.com/feed/",
+  "linkedin_url": "https://www.linkedin.com/messaging/",
   "dedicated_profile": false,
   "chrome_profile_directory": "Default",
   "chrome_path": "",

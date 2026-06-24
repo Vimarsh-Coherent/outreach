@@ -207,14 +207,15 @@ async def change_status(
 
 
 async def test_now(session: AsyncSession, user_id: int, sequence_id: int) -> dict:
-    """Pull every future-scheduled enrolment forward to NOW so the sequence
-    fires immediately, bypassing the send-window wait — for testing.
+    """Pull every pending enrolment forward to NOW and immediately run the
+    dispatcher so the sequence fires without waiting for the next scheduler tick.
 
-    Only touches active enrolments whose next_send_at is in the FUTURE: this
-    deliberately skips enrolments parked with next_send_at=NULL (those are
-    in-flight, waiting on a LinkedIn command webhook — bumping them would mint a
-    duplicate command) and ones already due (they fire on the next tick anyway).
+    Touches active enrolments whose next_send_at IS NOT NULL (skips ones parked
+    with NULL — those are in-flight awaiting a LinkedIn command webhook, bumping
+    them would mint a duplicate command).  Covers both future-scheduled AND
+    already-due enrolments so clicking Test now always triggers a real send.
     """
+    import asyncio as _asyncio
     from sqlalchemy import text as _text
 
     s = await session.scalar(
@@ -226,23 +227,27 @@ async def test_now(session: AsyncSession, user_id: int, sequence_id: int) -> dic
         raise HTTPException(400, "cannot test an archived sequence")
     activated = False
     if s.status in ("draft", "paused"):
-        # Test-fire: flip to active so the dispatcher will claim the enrolments.
-        # Deliberately SKIP the channel-availability guard that change_status
-        # enforces — this is a test, so a step lacking its channel (e.g. email
-        # with no SMTP channel) just fails on its own rather than blocking the
-        # whole run; the channels that ARE connected still fire.
         if await _load_step_count(session, s.id) == 0:
             raise HTTPException(400, "sequence has no steps to test")
         s.status = "active"
         activated = True
+    # Bump ALL pending enrolments (future OR already-due) to NOW so the
+    # dispatcher claims them on the immediate tick below.
     result = await session.execute(_text(
         "UPDATE outreach.enrolments SET next_send_at = NOW() "
         "WHERE sequence_id = :sid AND user_id = :uid AND status = 'active' "
-        "  AND next_send_at IS NOT NULL AND next_send_at > NOW() "
+        "  AND next_send_at IS NOT NULL "
         "RETURNING id"
     ), {"sid": sequence_id, "uid": user_id})
     fired = [r[0] for r in result.all()]
     await session.commit()
+
+    # Run the dispatcher immediately in the background so the user doesn't
+    # have to wait for the next scheduled tick.
+    if fired or activated:
+        from outreach.workers.dispatcher import tick as _tick
+        _asyncio.create_task(_tick())
+
     return {"fired": len(fired), "activated": activated, "enrolment_ids": fired}
 
 
@@ -390,11 +395,23 @@ async def update_step(
 
 
 async def delete_step(session: AsyncSession, user_id: int, sequence_id: int, step_id: int) -> bool:
+    from sqlalchemy import text as _text
     s = await session.scalar(
         select(Sequence).where(Sequence.id == sequence_id, Sequence.user_id == user_id)
     )
     if s is None:
         raise HTTPException(404, "sequence not found")
+    # Remove dependent rows before deleting the step (no CASCADE on these FKs).
+    await session.execute(_text(
+        "DELETE FROM outreach.events WHERE step_run_id IN "
+        "  (SELECT id FROM outreach.step_runs WHERE step_id = :sid)"
+    ), {"sid": step_id})
+    await session.execute(_text(
+        "DELETE FROM outreach.step_runs WHERE step_id = :sid"
+    ), {"sid": step_id})
+    await session.execute(_text(
+        "DELETE FROM outreach.li_commands WHERE step_id = :sid"
+    ), {"sid": step_id})
     r = await session.execute(
         delete(SequenceStep).where(SequenceStep.id == step_id, SequenceStep.sequence_id == sequence_id)
     )

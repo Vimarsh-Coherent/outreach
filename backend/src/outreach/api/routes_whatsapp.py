@@ -12,6 +12,8 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi import Body  # noqa: F401 — used by pairing code feature
+from outreach.channels import whatsapp_channel
 from outreach.config import get_settings
 from outreach.db import SessionLocal
 from outreach.models.enrolment import Enrolment
@@ -42,6 +44,15 @@ async def _match_step_run(session: AsyncSession, sender_e164: str) -> int | None
         if phone and phone == sender_e164:
             return run_id
     return None
+
+
+# PAIRING CODE FEATURE — remove this route to disable phone-number linking
+@router.post("/pairing-code")
+async def request_pairing_code(phone: str = Body(..., embed=True)) -> dict:
+    """Request an 8-char pairing code from the sidecar for phone-number linking."""
+    digits = phone.replace("+", "").replace(" ", "").replace("-", "")
+    return await whatsapp_channel.request_pairing_code(digits)
+# END PAIRING CODE FEATURE
 
 
 @router.post("/inbound")

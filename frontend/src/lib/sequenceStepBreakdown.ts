@@ -30,6 +30,8 @@ function actionPhrase(step: StepBreakdownSource): string {
       return `Send a LinkedIn connection request — ${label}`;
     case "linkedin_dm":
       return `Send a LinkedIn message — ${label}`;
+    case "linkedin_like":
+      return `Visit LinkedIn profile and like recent posts — ${label}`;
     case "call":
       return `Assign a call task to the rep — ${label}`;
     case "sms":

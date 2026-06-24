@@ -122,6 +122,21 @@ export async function getWhatsAppQr(): Promise<WhatsAppQr> {
   return r.data;
 }
 
+export interface LinkedInChannelCreated {
+  id: number;
+  display_label: string;
+  daily_cap: number;
+  raw_token: string;
+}
+
+export async function createLinkedInChannel(body: {
+  display_label: string;
+  daily_cap: number;
+}): Promise<LinkedInChannelCreated> {
+  const r = await api.post<LinkedInChannelCreated>("/channels/linkedin", body);
+  return r.data;
+}
+
 export async function createWhatsAppChannel(body: {
   display_label: string;
   daily_cap: number;
@@ -134,3 +149,10 @@ export async function logoutWhatsApp(): Promise<{ ok: boolean }> {
   const r = await api.post<{ ok: boolean }>("/channels/whatsapp/logout", {});
   return r.data;
 }
+
+// PAIRING CODE FEATURE — remove this function to disable phone-number linking
+export async function requestWaPairingCode(phone: string): Promise<{ ok: boolean; code?: string; error?: string }> {
+  const r = await api.post("/whatsapp/pairing-code", { phone });
+  return r.data;
+}
+// END PAIRING CODE FEATURE

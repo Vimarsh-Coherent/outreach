@@ -78,6 +78,18 @@ class WatchdogState:
     connection_accepts_today: int = 0
     last_connection_accept_at: datetime | None = None
 
+    # Extension inbox-scan telemetry (scanInbox self-loop)
+    inbox_scans_today: int = 0
+    inbox_replies_today: int = 0
+    last_inbox_scan_at: datetime | None = None
+
+    # Manual DM commands queued from Leads page
+    manual_li_commands_today: int = 0
+    last_manual_li_command_at: datetime | None = None
+
+    # LinkedIn like/engage commands
+    like_posts_today: int = 0
+
     # Per-intent failure counters (last 24h, in-process). Keyed by content-script
     # error name (e.g. "composer_remained_empty_after_insertion") so a dashboard
     # or operator can see which DOM intent is currently fragile.
@@ -183,12 +195,19 @@ def note_li_command_outcome(
     if status == "done":
         st.linkedin_command_successes_today += 1
         st.li_last_success_at = now
-        # Lightly log success so the dashboard shows traffic, not just errors.
-        log_event(
-            "extension_failure", "healthy",  # tier reused for ext signal
-            f"li_command#{cmd_id} ({command_type}) delivered",
-            cmd_id=cmd_id, command_type=command_type,
-        )
+        if command_type == "like_posts":
+            st.like_posts_today += 1
+            log_event(
+                "extension_failure", "healthy",
+                f"li_command#{cmd_id} (like_posts) completed (today: {st.like_posts_today})",
+                cmd_id=cmd_id, command_type=command_type,
+            )
+        else:
+            log_event(
+                "extension_failure", "healthy",
+                f"li_command#{cmd_id} ({command_type}) delivered",
+                cmd_id=cmd_id, command_type=command_type,
+            )
         return
 
     # status == "failed" path
@@ -206,6 +225,53 @@ def note_li_command_outcome(
         cmd_id=cmd_id, command_type=command_type, error=(error or "")[:300],
         intent_failure_count=st.li_failure_by_intent[key],
     )
+
+
+def note_inbox_scan(reply_count: int) -> None:
+    """Called from /replies when the extension posts inbound LinkedIn DMs."""
+    st = _STATE
+    st.inbox_scans_today += 1
+    st.inbox_replies_today += reply_count
+    st.last_inbox_scan_at = datetime.now(timezone.utc)
+    status: EventStatus = "healthy" if reply_count > 0 else "healthy"
+    log_event(
+        "extension_failure", status,
+        f"inbox_scan: {reply_count} new LinkedIn repl{'y' if reply_count == 1 else 'ies'} captured "
+        f"(total today: {st.inbox_replies_today})",
+        reply_count=reply_count,
+        inbox_scans_today=st.inbox_scans_today,
+    )
+
+
+def note_manual_li_command(lead_id: int, target_url: str) -> None:
+    """Called when a manual LinkedIn DM is queued from the Leads page."""
+    st = _STATE
+    st.manual_li_commands_today += 1
+    st.last_manual_li_command_at = datetime.now(timezone.utc)
+    log_event(
+        "extension_failure", "healthy",
+        f"manual_li_dm queued for lead#{lead_id} → {target_url[:60]}",
+        lead_id=lead_id, manual_today=st.manual_li_commands_today,
+    )
+
+
+def note_like_posts_outcome(cmd_id: int, status: str, liked: int = 0) -> None:
+    """Called when a like_posts command completes."""
+    st = _STATE
+    if status == "done":
+        st.like_posts_today += 1
+        st.li_last_success_at = datetime.now(timezone.utc)
+        log_event(
+            "extension_failure", "healthy",
+            f"like_posts#{cmd_id} done — liked {liked} post(s) (today: {st.like_posts_today})",
+            cmd_id=cmd_id, liked=liked,
+        )
+    else:
+        log_event(
+            "extension_failure", "issue",
+            f"like_posts#{cmd_id} failed",
+            cmd_id=cmd_id,
+        )
 
 
 def note_connection_accepted(enrolment_id: int, li_url: str | None = None) -> None:

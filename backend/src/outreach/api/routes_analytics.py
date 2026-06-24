@@ -18,13 +18,22 @@ WITH outbound AS (
     SELECT
         sr.sent_at                                                      AS occurred_at,
         'sent'                                                          AS direction,
-        sr.channel,
+        CASE WHEN sr.channel IN ('linkedin','linkedin_dm','linkedin_connect')
+             THEN 'linkedin_dm' ELSE sr.channel END                     AS channel,
         TRIM(COALESCE(en.contact_snapshot->>'first_name','') || ' ' ||
              COALESCE(en.contact_snapshot->>'last_name',''))            AS contact_name,
         en.contact_snapshot->>'email'                                   AS contact_email,
         en.contact_snapshot->>'phone'                                   AS contact_phone,
         en.contact_snapshot->>'linkedin_url'                            AS contact_li_url,
-        LEFT(ss.body, 300)                                              AS body,
+        LEFT(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                ss.body,
+                '{{first_name}}', COALESCE(en.contact_snapshot->>'first_name','')),
+                '{{last_name}}',  COALESCE(en.contact_snapshot->>'last_name','')),
+                '{{company}}',    COALESCE(en.contact_snapshot->>'company','')),
+                '{{title}}',      COALESCE(en.contact_snapshot->>'title','')),
+                '{{full_name}}',  TRIM(COALESCE(en.contact_snapshot->>'first_name','') || ' ' || COALESCE(en.contact_snapshot->>'last_name',''))
+            ), 300)                                                     AS body,
         ss.subject,
         NULL::text                                                      AS sentiment_label,
         NULL::float                                                     AS sentiment_confidence,
@@ -34,13 +43,17 @@ WITH outbound AS (
     JOIN outreach.sequence_steps ss ON ss.id = sr.step_id
     JOIN outreach.enrolments en     ON en.id = sr.enrolment_id
     WHERE sr.status = 'sent' AND en.user_id = :uid
-      AND (:channel = 'all' OR sr.channel = :channel)
+      AND (:days <= 0 OR sr.sent_at >= NOW() - MAKE_INTERVAL(days => :days))
+      AND (:channel = 'all'
+           OR (:channel = 'linkedin_dm' AND sr.channel IN ('linkedin','linkedin_dm','linkedin_connect'))
+           OR (:channel NOT IN ('all','linkedin_dm') AND sr.channel = :channel))
 ),
 inbound AS (
     SELECT
         ev.occurred_at,
         'received'                                                      AS direction,
-        ev.channel,
+        CASE WHEN ev.channel IN ('linkedin','linkedin_dm','linkedin_connect')
+             THEN 'linkedin_dm' ELSE ev.channel END                     AS channel,
         TRIM(COALESCE(en.contact_snapshot->>'first_name','') || ' ' ||
              COALESCE(en.contact_snapshot->>'last_name',''))            AS contact_name,
         en.contact_snapshot->>'email'                                   AS contact_email,
@@ -56,7 +69,10 @@ inbound AS (
     JOIN outreach.enrolments en       ON en.id = ev.enrolment_id
     LEFT JOIN outreach.reply_sentiment rs ON rs.event_id = ev.id
     WHERE ev.event_type = 'reply' AND en.user_id = :uid
-      AND (:channel = 'all' OR ev.channel = :channel)
+      AND (:days <= 0 OR ev.occurred_at >= NOW() - MAKE_INTERVAL(days => :days))
+      AND (:channel = 'all'
+           OR (:channel = 'linkedin_dm' AND ev.channel IN ('linkedin','linkedin_dm','linkedin_connect'))
+           OR (:channel NOT IN ('all','linkedin_dm') AND ev.channel = :channel))
 ),
 combined AS (
     SELECT * FROM outbound
@@ -71,16 +87,24 @@ LIMIT :limit OFFSET :offset
 
 _STATS_SQL = text("""
 WITH outbound AS (
-    SELECT sr.channel, 'sent' AS direction
+    SELECT
+        CASE WHEN sr.channel IN ('linkedin','linkedin_dm','linkedin_connect')
+             THEN 'linkedin_dm' ELSE sr.channel END AS channel,
+        'sent' AS direction
     FROM outreach.step_runs sr
     JOIN outreach.enrolments en ON en.id = sr.enrolment_id
     WHERE sr.status = 'sent' AND en.user_id = :uid
+      AND (:days <= 0 OR sr.sent_at >= NOW() - MAKE_INTERVAL(days => :days))
 ),
 inbound AS (
-    SELECT ev.channel, 'received' AS direction
+    SELECT
+        CASE WHEN ev.channel IN ('linkedin','linkedin_dm','linkedin_connect')
+             THEN 'linkedin_dm' ELSE ev.channel END AS channel,
+        'received' AS direction
     FROM outreach.events ev
     JOIN outreach.enrolments en ON en.id = ev.enrolment_id
     WHERE ev.event_type = 'reply' AND en.user_id = :uid
+      AND (:days <= 0 OR ev.occurred_at >= NOW() - MAKE_INTERVAL(days => :days))
 ),
 combined AS (SELECT * FROM outbound UNION ALL SELECT * FROM inbound)
 SELECT
@@ -98,14 +122,20 @@ WITH outbound AS (
     FROM outreach.step_runs sr
     JOIN outreach.enrolments en ON en.id = sr.enrolment_id
     WHERE sr.status = 'sent' AND en.user_id = :uid
-      AND (:channel = 'all' OR sr.channel = :channel)
+      AND (:days <= 0 OR sr.sent_at >= NOW() - MAKE_INTERVAL(days => :days))
+      AND (:channel = 'all'
+           OR (:channel = 'linkedin_dm' AND sr.channel IN ('linkedin','linkedin_dm','linkedin_connect'))
+           OR (:channel NOT IN ('all','linkedin_dm') AND sr.channel = :channel))
 ),
 inbound AS (
     SELECT ev.channel, ev.occurred_at, 'received' AS direction
     FROM outreach.events ev
     JOIN outreach.enrolments en ON en.id = ev.enrolment_id
     WHERE ev.event_type = 'reply' AND en.user_id = :uid
-      AND (:channel = 'all' OR ev.channel = :channel)
+      AND (:days <= 0 OR ev.occurred_at >= NOW() - MAKE_INTERVAL(days => :days))
+      AND (:channel = 'all'
+           OR (:channel = 'linkedin_dm' AND ev.channel IN ('linkedin','linkedin_dm','linkedin_connect'))
+           OR (:channel NOT IN ('all','linkedin_dm') AND ev.channel = :channel))
 )
 SELECT COUNT(*) FROM (
     SELECT * FROM outbound UNION ALL SELECT * FROM inbound
@@ -117,6 +147,7 @@ SELECT COUNT(*) FROM (
 async def list_messages(
     channel: str = Query(default="all"),
     direction: str = Query(default="all"),
+    days: int = Query(default=30, ge=0),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0),
     session: AsyncSession = Depends(get_session),
@@ -124,13 +155,13 @@ async def list_messages(
 ) -> dict:
     uid = user.id
     params = {"uid": uid, "channel": channel, "direction": direction,
-              "limit": limit, "offset": offset}
+              "days": days, "limit": limit, "offset": offset}
 
     rows = (await session.execute(_MESSAGES_SQL, params)).all()
     total = (await session.execute(_COUNT_SQL, {
-        "uid": uid, "channel": channel, "direction": direction
+        "uid": uid, "channel": channel, "direction": direction, "days": days
     })).scalar() or 0
-    stats_rows = (await session.execute(_STATS_SQL, {"uid": uid})).all()
+    stats_rows = (await session.execute(_STATS_SQL, {"uid": uid, "days": days})).all()
 
     items = []
     for r in rows:

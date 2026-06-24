@@ -88,6 +88,8 @@ services:
 
       - ./backend/src:/app/src
 
+      - ./backend/alembic:/app/alembic
+
     depends_on:
 
       postgres:

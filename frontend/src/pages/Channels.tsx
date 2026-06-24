@@ -5,10 +5,12 @@ import {
   ChannelOut,
   EmailPreset,
   IMAPConfig,
+  LinkedInChannelCreated,
   SMTPConfig,
   SecurityMode,
   TestEmailChannelResponse,
   createEmailChannel,
+  createLinkedInChannel,
   createWhatsAppChannel,
   deleteChannel,
   getEmailPresets,
@@ -16,6 +18,7 @@ import {
   getWhatsAppStatus,
   listChannels,
   logoutWhatsApp,
+  requestWaPairingCode,
   testEmailChannel,
 } from "../api/channels";
 
@@ -62,11 +65,113 @@ const WA_STATE_LABEL: Record<string, { text: string; cls: string }> = {
   unavailable: { text: "Sidecar offline", cls: "badge-rose" },
 };
 
+function LinkedInCard() {
+  const qc = useQueryClient();
+  const [label, setLabel] = useState("My LinkedIn");
+  const [cap, setCap] = useState(40);
+  const [created, setCreated] = useState<LinkedInChannelCreated | null>(null);
+  const [copied, setCopied] = useState<"id" | "token" | null>(null);
+
+  const channels = useQuery({ queryKey: ["channels"], queryFn: listChannels });
+  const existing = channels.data?.filter(c => c.channel_type === "linkedin") ?? [];
+
+  const createMut = useMutation({
+    mutationFn: () => createLinkedInChannel({ display_label: label, daily_cap: cap }),
+    onSuccess: r => { setCreated(r); qc.invalidateQueries({ queryKey: ["channels"] }); },
+  });
+
+  function copy(text: string, which: "id" | "token") {
+    navigator.clipboard.writeText(text);
+    setCopied(which);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  return (
+    <section className="rounded border bg-white p-6 space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="text-sky-600 font-bold text-sm">in</span>
+        <h3 className="font-semibold text-slate-800">LinkedIn Extension Channel</h3>
+      </div>
+      <p className="text-sm text-slate-500">
+        Creates a secure token for the Coherent Outreach Chrome extension. Paste the Channel ID + Token into the extension popup once — the token cannot be retrieved again.
+      </p>
+
+      {existing.length > 0 && (
+        <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 space-y-1">
+          {existing.map(c => (
+            <div key={c.id} className="flex items-center justify-between">
+              <span>Channel <span className="font-mono font-bold">#{c.id}</span> · {c.display_label} · active</span>
+            </div>
+          ))}
+          <p className="text-xs text-emerald-700 mt-1">To get a new token, delete this channel and create a fresh one below.</p>
+        </div>
+      )}
+
+      {created && (
+        <div className="rounded border border-amber-300 bg-amber-50 p-4 space-y-3 text-sm">
+          <p className="font-semibold text-amber-800">Save these now — the token is shown only once.</p>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600 w-24 shrink-0">Channel ID</span>
+              <code className="flex-1 bg-white border rounded px-2 py-1 font-mono text-xs select-all">{created.id}</code>
+              <button onClick={() => copy(String(created.id), "id")} className="border rounded px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200">
+                {copied === "id" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600 w-24 shrink-0">Token</span>
+              <code className="flex-1 bg-white border rounded px-2 py-1 font-mono text-xs select-all break-all">{created.raw_token}</code>
+              <button onClick={() => copy(created.raw_token, "token")} className="border rounded px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200">
+                {copied === "token" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500">Paste both into the extension popup on LinkedIn, then reload the extension.</p>
+        </div>
+      )}
+
+      {existing.length === 0 && !created && (
+        <div className="flex items-end gap-3 flex-wrap">
+          <label className="text-sm">
+            <span className="block text-slate-600 mb-1">Label</span>
+            <input value={label} onChange={e => setLabel(e.target.value)} className="border rounded px-2 py-1.5 w-48" placeholder="My LinkedIn" />
+          </label>
+          <label className="text-sm">
+            <span className="block text-slate-600 mb-1">Daily DM cap</span>
+            <input type="number" min={1} max={200} value={cap} onChange={e => setCap(Number(e.target.value))} className="border rounded px-2 py-1.5 w-24" />
+          </label>
+          <button
+            disabled={createMut.isPending || !label.trim()}
+            onClick={() => createMut.mutate()}
+            className="border rounded px-4 py-1.5 bg-sky-600 text-white hover:bg-sky-700 disabled:bg-slate-300 text-sm"
+          >
+            {createMut.isPending ? "Creating…" : "Create LinkedIn channel"}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function WhatsAppCard() {
   const qc = useQueryClient();
   const [label, setLabel] = useState("WhatsApp");
   const [cap, setCap] = useState(100);
   const [waError, setWaError] = useState<string | null>(null);
+  // PAIRING CODE FEATURE — remove this block to disable phone-number linking
+  const [pairMode, setPairMode] = useState<"qr" | "phone">("qr");
+  const [pairPhone, setPairPhone] = useState("");
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [pairLoading, setPairLoading] = useState(false);
+  async function handleRequestCode() {
+    if (!pairPhone.trim()) return;
+    setPairLoading(true); setPairCode(null); setWaError(null);
+    const res = await requestWaPairingCode(pairPhone.trim());
+    setPairLoading(false);
+    if (res.ok && res.code) setPairCode(res.code);
+    else setWaError(res.error || "Failed to get pairing code");
+  }
+  // END PAIRING CODE FEATURE
 
   const { data: status } = useQuery({
     queryKey: ["wa-status"],
@@ -127,15 +232,64 @@ function WhatsAppCard() {
       )}
 
       {!connected && state !== "unavailable" && (
-        <div className="flex flex-col items-center gap-3 py-2">
-          {qr?.qr ? (
-            <img src={qr.qr} alt="WhatsApp QR" className="w-56 h-56 border rounded-lg bg-white" />
+        <div className="flex flex-col items-center gap-4 py-2">
+          {/* PAIRING CODE FEATURE — remove this toggle + phone block to disable */}
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1 text-sm">
+            <button onClick={() => { setPairMode("qr"); setPairCode(null); }}
+              className={`px-4 py-1.5 rounded font-medium transition-colors ${pairMode === "qr" ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+              Scan QR code
+            </button>
+            <button onClick={() => { setPairMode("phone"); }}
+              className={`px-4 py-1.5 rounded font-medium transition-colors ${pairMode === "phone" ? "bg-white shadow text-slate-800" : "text-slate-500 hover:text-slate-700"}`}>
+              Link with phone number
+            </button>
+          </div>
+
+          {pairMode === "qr" ? (
+            <>
+              {qr?.qr ? (
+                <img src={qr.qr} alt="WhatsApp QR" className="w-56 h-56 border rounded bg-white" />
+              ) : (
+                <div className="w-56 h-56 border rounded bg-slate-50 flex items-center justify-center text-sm text-slate-400">
+                  Waiting for QR…
+                </div>
+              )}
+              <p className="text-xs text-slate-500">Open WhatsApp → Settings → Linked Devices → Link a device → scan this code.</p>
+            </>
           ) : (
-            <div className="w-56 h-56 border rounded-lg bg-slate-50 flex items-center justify-center text-sm text-slate-400">
-              {state === "logged_out" ? "Generating fresh QR…" : "Waiting for QR…"}
+            <div className="w-full max-w-sm space-y-3">
+              <p className="text-xs text-slate-500 text-center">
+                Enter your WhatsApp number. You'll get an 8-digit code to enter on your phone:<br />
+                <span className="font-medium">WhatsApp → Settings → Linked Devices → Link with phone number</span>
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="tel"
+                  placeholder="+91 98765 43210"
+                  value={pairPhone}
+                  onChange={e => setPairPhone(e.target.value)}
+                  className="flex-1 border rounded px-3 py-2 text-sm"
+                />
+                <button
+                  onClick={handleRequestCode}
+                  disabled={pairLoading || !pairPhone.trim()}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded text-sm font-medium hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {pairLoading ? "…" : "Get code"}
+                </button>
+              </div>
+              {pairCode && (
+                <div className="text-center py-3 bg-slate-50 border rounded-lg">
+                  <div className="text-xs text-slate-500 mb-1">Enter this code on your phone</div>
+                  <div className="text-3xl font-mono font-bold tracking-widest text-slate-800 select-all">
+                    {pairCode.slice(0, 4)}-{pairCode.slice(4)}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">Code expires in ~60 seconds</div>
+                </div>
+              )}
             </div>
           )}
-          <p className="text-xs text-slate-500">The code refreshes automatically until you scan it.</p>
+          {/* END PAIRING CODE FEATURE */}
         </div>
       )}
 
@@ -411,6 +565,7 @@ export default function Channels() {
         </div>
       </section>
 
+      <LinkedInCard />
       <WhatsAppCard />
 
       <section className="card">
@@ -434,24 +589,35 @@ export default function Channels() {
               </tr>
             </thead>
             <tbody>
-              {channels.map((c: ChannelOut) => (
-                <tr key={c.id} className="border-t border-slate-100">
-                  <td className="td font-medium">{c.display_label}</td>
-                  <td className="td">{c.channel_type}</td>
-                  <td className="td font-mono text-xs">{c.smtp_host}:{c.smtp_port}</td>
-                  <td className="td font-mono text-xs">{c.imap_host ? `${c.imap_host}:${c.imap_port}` : "—"}</td>
-                  <td className="td">{c.sent_today}/{c.daily_cap}</td>
-                  <td className="td">
-                    <span className={c.status === "active" || c.status === "connected" ? "badge-green" : c.status === "invalid" || c.status === "error" ? "badge-rose" : c.status === "pending" ? "badge-amber" : "badge-slate"}>{c.status}</span>
-                  </td>
-                  <td className="td">
-                    <button
-                      onClick={() => { if (confirm(`Delete "${c.display_label}"?`)) deleteMut.mutate(c.id); }}
-                      className="text-rose-600 hover:underline text-xs"
-                    >delete</button>
-                  </td>
-                </tr>
-              ))}
+              {channels.map((c: ChannelOut) => {
+                const isWa = c.channel_type === "whatsapp";
+                const isPhone = isWa && /^[+\d\s\-()]{7,}$/.test(c.display_label.trim());
+                const primaryLabel = isPhone ? "WhatsApp" : c.display_label;
+                const subLabel = isPhone ? c.display_label : null;
+                const typeLabel = isWa ? "WhatsApp" : c.channel_type === "linkedin" ? "LinkedIn" : "Email";
+                const typeCls = isWa ? "badge-green" : c.channel_type === "linkedin" ? "badge-brand" : "badge-slate";
+                return (
+                  <tr key={c.id} className="border-t border-slate-100">
+                    <td className="td">
+                      <div className="font-medium text-slate-800">{primaryLabel}</div>
+                      {subLabel && <div className="text-xs text-slate-400 mt-0.5">{subLabel}</div>}
+                    </td>
+                    <td className="td"><span className={typeCls}>{typeLabel}</span></td>
+                    <td className="td font-mono text-xs">{c.smtp_host ? `${c.smtp_host}:${c.smtp_port}` : "—"}</td>
+                    <td className="td font-mono text-xs">{c.imap_host ? `${c.imap_host}:${c.imap_port}` : "—"}</td>
+                    <td className="td">{c.sent_today}/{c.daily_cap}</td>
+                    <td className="td">
+                      <span className={c.status === "active" || c.status === "connected" ? "badge-green" : c.status === "invalid" || c.status === "error" ? "badge-rose" : c.status === "pending" ? "badge-amber" : "badge-slate"}>{c.status}</span>
+                    </td>
+                    <td className="td">
+                      <button
+                        onClick={() => { if (confirm(`Delete "${primaryLabel}"?`)) deleteMut.mutate(c.id); }}
+                        className="text-rose-600 hover:underline text-xs"
+                      >delete</button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

@@ -33,8 +33,19 @@ export interface WatchdogState {
 
   detections_today: number;
   linkedin_command_failures_today: number;
+  linkedin_command_successes_today: number;
   consecutive_failures: number;
   disabled_until: string | null;
+
+  // Extension activity telemetry
+  inbox_scans_today: number;
+  inbox_replies_today: number;
+  last_inbox_scan_at: string | null;
+  manual_li_commands_today: number;
+  last_manual_li_command_at: string | null;
+  like_posts_today: number;
+  li_last_success_at: string | null;
+  li_last_failure_at: string | null;
 
   events: WatchdogEvent[];
 }

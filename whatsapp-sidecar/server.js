@@ -119,8 +119,16 @@ async function start() {
         const loggedOut = code === DisconnectReason.loggedOut;
         currentQR = null;
         if (loggedOut) {
-          state = "logged_out";
-          log.warn("session logged out — wipe session and re-scan QR");
+          log.warn("session logged out — wiping session and restarting for fresh QR");
+          state = "starting";
+          currentQR = null;
+          meId = null;
+          sock = null;
+          try { rmSync(SESSION_PATH, { recursive: true, force: true }); } catch (_) {}
+          mkdirSync(SESSION_PATH, { recursive: true });
+          starting = false;
+          start();
+          return;
         } else {
           state = "disconnected";
           log.warn({ code }, "connection closed — reconnecting");
@@ -203,6 +211,24 @@ app.post("/sendText", async (req, res) => {
     res.status(502).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+// ── PAIRING CODE FEATURE — remove this block to disable phone-number linking ──
+app.post("/requestPairingCode", async (req, res) => {
+  const { phone } = req.body || {};
+  if (!phone) return res.status(400).json({ ok: false, error: "phone required" });
+  if (!sock) return res.status(503).json({ ok: false, error: "sidecar not ready" });
+  if (state === "connected") return res.status(400).json({ ok: false, error: "already connected" });
+  try {
+    const digits = String(phone).replace(/[^0-9]/g, "");
+    const code = await sock.requestPairingCode(digits);
+    log.info({ digits }, "pairing code issued");
+    res.json({ ok: true, code });
+  } catch (e) {
+    log.warn({ err: String(e) }, "requestPairingCode failed");
+    res.status(502).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+// ── END PAIRING CODE FEATURE ─────────────────────────────────────────────────
 
 app.post("/logout", async (_req, res) => {
   try {

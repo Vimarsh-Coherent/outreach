@@ -13,7 +13,7 @@
   // Content-script build marker — printed on every injection. Confirms which
   // content-script version is live from the LinkedIn tab's DevTools (the SW
   // build marker only proves the worker; this proves the page code).
-  const COHERENT_CS_BUILD = '2026-06-16-sendonce-v34';
+  const COHERENT_CS_BUILD = '2026-06-23-like-v40';
   LOG('content_linkedin.js loaded — build', COHERENT_CS_BUILD);
 
   // 45s: the DM flow alone can spend ~8s waiting for Send to enable plus the
@@ -1076,6 +1076,51 @@
     return null;
   }
 
+  // ── Like posts execution ─────────────────────────────────────────────────
+  // Visits the profile's recent-activity feed and likes up to 2 posts that the
+  // current user hasn't already liked. Safe: never likes own posts, skips any
+  // post that is already in a liked/reacted state.
+  async function executeLike(cmd) {
+    await waitFor(() => document.querySelector('main'));
+    // ensureOnTarget already navigated us to /recent-activity/all/ — wait for
+    // the feed to populate (try both old and new LinkedIn feed class names)
+    await waitFor(
+      () => document.querySelector(
+        '.feed-shared-update-v2, .occludable-update, [data-urn], .scaffold-finite-scroll__content'
+      ), 12_000
+    ).catch(() => null);
+    await sleep(2000);
+
+    const MAX_LIKES = 2;
+    let liked = 0;
+
+    // Collect all reaction/like buttons on the page — LinkedIn's aria-label
+    // varies: "Like", "Like Vimarsh's post", "React Like", etc. Match anything
+    // containing "Like" that isn't already pressed.
+    const allBtns = Array.from(document.querySelectorAll('button[aria-label]'));
+    const likeBtns = allBtns.filter(btn => {
+      const label = btn.getAttribute('aria-label') || '';
+      const pressed = btn.getAttribute('aria-pressed');
+      // Must contain "Like" (case-insensitive), must NOT already be pressed/reacted
+      return /like/i.test(label) && pressed !== 'true';
+    });
+
+    LOG(`executeLike: found ${likeBtns.length} likeable buttons on page`);
+
+    for (const btn of likeBtns) {
+      if (liked >= MAX_LIKES) break;
+      btn.click();
+      await sleep(900 + Math.random() * 700);
+      liked++;
+      LOG(`executeLike: liked post ${liked}/${MAX_LIKES}`);
+    }
+
+    if (liked === 0) {
+      LOG('executeLike: no unliked posts found — all already liked or page empty');
+    }
+    return { providerMessageId: `liked:${liked}`, liked };
+  }
+
   // ── Connect execution ───────────────────────────────────────────────────
   async function executeConnect(cmd) {
     await waitFor(() => document.querySelector('main'));
@@ -1369,7 +1414,12 @@
 
       const cmd = msg.cmd;
       try {
-        const nav = await ensureOnTarget(cmd.target_li_url);
+        // For like_posts, navigate straight to the activity feed URL so the
+        // single background retry lands on the page that executeLike expects.
+        const navTarget = cmd.command_type === 'like_posts'
+          ? cmd.target_li_url.replace(/\/$/, '') + '/recent-activity/all/'
+          : cmd.target_li_url;
+        const nav = await ensureOnTarget(navTarget);
         if (nav.navigated) {
           // Page is reloading — background will retry next poll cycle
           sendResponse({ ok: true, navigating: true });
@@ -1378,6 +1428,7 @@
         let result;
         if (cmd.command_type === 'dm')           result = await executeWithSelfHeal(cmd, executeDm);
         else if (cmd.command_type === 'connect') result = await executeWithSelfHeal(cmd, executeConnect);
+        else if (cmd.command_type === 'like_posts') result = await executeLike(cmd);
         else throw new Error(`unknown_command_type:${cmd.command_type}`);
 
         // Build fingerprint appended to every result: lets the backend prove
@@ -1410,51 +1461,33 @@
   async function scanInbox() {
     if (!location.pathname.startsWith('/messaging/')) return;
 
-    // Strategy 1: known container selectors (LinkedIn changes these periodically)
-    let items = Array.from(document.querySelectorAll(
-      'li.msg-conversation-listitem, li[data-test-conversation-listitem], ' +
-      '[data-view-name="messaging-conversation-list-item"]'
-    ));
+    // Left panel conversation list uses .msg-conversation-card__message-snippet
+    // (NOT .msg-s-event-listitem__body which is used by the open thread on the right).
+    // Each snippet lives inside a .msg-conversation-listitem which contains the
+    // thread link a.msg-conversation-listitem__link with href="/messaging/thread/...".
+    const snippetEls = Array.from(document.querySelectorAll('.msg-conversation-card__message-snippet'));
 
-    // Strategy 2: walk up from thread links to find conversation containers
-    if (items.length === 0) {
-      const threadLinks = document.querySelectorAll('a[href*="/messaging/thread/"]');
-      const seen = new Set();
-      for (const a of threadLinks) {
-        let el = a.parentElement;
-        while (el && el.tagName !== 'LI') el = el.parentElement;
-        if (el && !seen.has(el)) { seen.add(el); items.push(el); }
-      }
-    }
-
-    LOG(`scanInbox: found ${items.length} conversation items`);
+    LOG(`scanInbox: found ${snippetEls.length} conversation snippets`);
     const replies = [];
-    for (const li of items.slice(0, 10)) {
-      const link = li.querySelector('a[href*="/messaging/thread/"]');
-      if (!link) continue;
-      const thread_id = link.getAttribute('href').split('/thread/')[1]?.split('/')[0];
-      if (!thread_id) continue;
-      const liUrl = li.querySelector('a[href*="/in/"]')?.getAttribute('href');
-      if (!liUrl) continue;
-      const snippet = (
-        li.querySelector('.msg-conversation-card__message-snippet')?.innerText ||
-        li.querySelector('[data-test-conversation-snippet]')?.innerText ||
-        li.querySelector('.msg-overview-v2__message-snippet')?.innerText ||
-        li.querySelector('p')?.innerText ||
-        ''
-      ).trim();
-      const message_id = `li:${thread_id}:${snippet.slice(0, 80)}`;
-      if (seenMessageIds.has(message_id)) continue;
-      seenMessageIds.add(message_id);
+    for (const bodyEl of snippetEls.slice(0, 15)) {
+      const listitem = bodyEl.closest('.msg-conversation-listitem');
+      if (!listitem) continue;
+      const snippet = (bodyEl.innerText || '').trim();
+      // Skip outbound messages — LinkedIn prefixes them with "You:"
+      if (!snippet || /^you\s*:/i.test(snippet)) continue;
       const from_name = (
-        li.querySelector('.msg-conversation-card__participant-names')?.innerText ||
-        li.querySelector('[data-test-conversation-participant-name]')?.innerText ||
-        li.querySelector('.artdeco-entity-lockup__title')?.innerText ||
+        listitem.querySelector('.msg-conversation-card__participant-names')?.innerText?.trim() ||
+        listitem.querySelector('.msg-conversation-listitem__participant-names')?.innerText?.trim() ||
         null
       );
+      // thread_id is optional — LinkedIn no longer exposes it in the left-panel DOM.
+      // Use name+snippet for deduplication; backend matches enrolment by from_name.
+      const message_id = `li:${(from_name || 'unknown').slice(0, 40)}:${snippet.slice(0, 80)}`;
+      if (seenMessageIds.has(message_id)) continue;
+      seenMessageIds.add(message_id);
       replies.push({
-        li_url: `https://www.linkedin.com${liUrl}`,
-        thread_id,
+        li_url: null,
+        thread_id: null,
         message_id,
         body: snippet,
         received_at: new Date().toISOString(),
@@ -1466,8 +1499,80 @@
       chrome.runtime.sendMessage({ kind: 'inbound-replies', replies });
     }
   }
-  // (scanInbox is now driven by the background patrol via RUN_PATROL_SESSION —
-  // no in-page setInterval, which would be metronomic.)
+  // ── Open-thread scan — captures messages inside the currently open thread ──
+  // Runs when the user is on a /messaging/thread/ URL. Reads individual message
+  // bubbles directly so replies are captured even if the user has already sent a
+  // follow-up (which would hide them from the inbox list snippet).
+  async function scanOpenThread() {
+    const m = location.pathname.match(/^\/messaging\/thread\/([^/?]+)/);
+    if (!m) return;
+    const thread_id = m[1];
+
+    // Resolve the other participant's name from the thread header
+    const participantName = (
+      document.querySelector('.msg-entity-lockup__entity-title')?.innerText?.trim() ||
+      document.querySelector('.msg-thread-title__text')?.innerText?.trim() ||
+      document.querySelector('h2[class*="thread"], [data-test-thread-subject]')?.innerText?.trim() ||
+      null
+    );
+
+    // Find all message body elements in the open thread
+    // Class confirmed from DOM inspection: msg-s-event-listitem__body
+    const allBodyEls = Array.from(document.querySelectorAll('.msg-s-event-listitem__body'));
+
+    const replies = [];
+    for (const bodyEl of allBodyEls.slice(-30)) {
+      const body = (bodyEl.innerText || '').trim();
+      if (!body || body.length < 2) continue;
+
+      // Walk up to find the message event container and detect if it's self/outbound.
+      // LinkedIn marks self-messages with --is-self on an ancestor, or places them
+      // in a right-aligned (no avatar) container.
+      const container = bodyEl.closest(
+        '.msg-s-event-with-indicator, .msg-s-event-listitem, [class*="message-event"]'
+      );
+      if (container) {
+        const isSelf =
+          container.classList.toString().includes('is-self') ||
+          container.closest('[class*="is-self"]') ||
+          // Outbound messages have no avatar img sibling; check parent
+          (!container.querySelector('img') &&
+           !container.parentElement?.querySelector('img[class*="presence"], img[class*="avatar"]'));
+        if (isSelf) continue;
+      }
+
+      const msg_id = `lithread:${thread_id}:${body.slice(0, 80)}`;
+      if (seenMessageIds.has(msg_id)) continue;
+      seenMessageIds.add(msg_id);
+
+      replies.push({
+        li_url: null,
+        thread_id,
+        message_id: msg_id,
+        body,
+        received_at: new Date().toISOString(),
+        from_name: participantName || null,
+      });
+    }
+    if (replies.length > 0) {
+      LOG(`scanOpenThread: ${replies.length} inbound message(s) found`);
+      chrome.runtime.sendMessage({ kind: 'inbound-replies', replies });
+    }
+  }
+  // ── End open-thread scan ────────────────────────────────────────────────────
+
+  // ── Inbox self-scan loop (jittered, passive reads only) ─────────────────
+  // The background patrol hits /messaging/ only ~once per 75-100 min. This
+  // self-scheduler runs every 45-90s on messaging pages so replies are
+  // captured promptly without waiting for a background-driven patrol.
+  (function scheduleInboxRescan() {
+    const delay = 45000 + Math.random() * 45000;
+    setTimeout(async () => {
+      try { await scanInbox(); } catch (e) { LOG('rescan err', e); }
+      try { await scanOpenThread(); } catch (e) { LOG('rescan thread err', e); }
+      scheduleInboxRescan();
+    }, delay);
+  })();
 
   // ── Connection-acceptance scan ──────────────────────────────────────────
   // Detects when a previously-invited lead has become a 1st-degree connection
@@ -1665,6 +1770,8 @@
     try { await scanConnections(); } catch (e) { LOG('patrol scanConnections err', e); }
     await patrolGap(2000, 8000);
     try { await scanInbox(); } catch (e) { LOG('patrol scanInbox err', e); }
+    await patrolGap(1000, 3000);
+    try { await scanOpenThread(); } catch (e) { LOG('patrol scanOpenThread err', e); }
     await patrolGap(2000, 8000);
 
     // 2) Risky warm-up actions — feed only, prob AND cap gated, shuffled.
