@@ -13,7 +13,7 @@
   // Content-script build marker — printed on every injection. Confirms which
   // content-script version is live from the LinkedIn tab's DevTools (the SW
   // build marker only proves the worker; this proves the page code).
-  const COHERENT_CS_BUILD = '2026-06-22-inbox-v37';
+  const COHERENT_CS_BUILD = '2026-06-23-like-v40';
   LOG('content_linkedin.js loaded — build', COHERENT_CS_BUILD);
 
   // 45s: the DM flow alone can spend ~8s waiting for Send to enable plus the
@@ -1076,6 +1076,51 @@
     return null;
   }
 
+  // ── Like posts execution ─────────────────────────────────────────────────
+  // Visits the profile's recent-activity feed and likes up to 2 posts that the
+  // current user hasn't already liked. Safe: never likes own posts, skips any
+  // post that is already in a liked/reacted state.
+  async function executeLike(cmd) {
+    await waitFor(() => document.querySelector('main'));
+    // ensureOnTarget already navigated us to /recent-activity/all/ — wait for
+    // the feed to populate (try both old and new LinkedIn feed class names)
+    await waitFor(
+      () => document.querySelector(
+        '.feed-shared-update-v2, .occludable-update, [data-urn], .scaffold-finite-scroll__content'
+      ), 12_000
+    ).catch(() => null);
+    await sleep(2000);
+
+    const MAX_LIKES = 2;
+    let liked = 0;
+
+    // Collect all reaction/like buttons on the page — LinkedIn's aria-label
+    // varies: "Like", "Like Vimarsh's post", "React Like", etc. Match anything
+    // containing "Like" that isn't already pressed.
+    const allBtns = Array.from(document.querySelectorAll('button[aria-label]'));
+    const likeBtns = allBtns.filter(btn => {
+      const label = btn.getAttribute('aria-label') || '';
+      const pressed = btn.getAttribute('aria-pressed');
+      // Must contain "Like" (case-insensitive), must NOT already be pressed/reacted
+      return /like/i.test(label) && pressed !== 'true';
+    });
+
+    LOG(`executeLike: found ${likeBtns.length} likeable buttons on page`);
+
+    for (const btn of likeBtns) {
+      if (liked >= MAX_LIKES) break;
+      btn.click();
+      await sleep(900 + Math.random() * 700);
+      liked++;
+      LOG(`executeLike: liked post ${liked}/${MAX_LIKES}`);
+    }
+
+    if (liked === 0) {
+      LOG('executeLike: no unliked posts found — all already liked or page empty');
+    }
+    return { providerMessageId: `liked:${liked}`, liked };
+  }
+
   // ── Connect execution ───────────────────────────────────────────────────
   async function executeConnect(cmd) {
     await waitFor(() => document.querySelector('main'));
@@ -1369,7 +1414,12 @@
 
       const cmd = msg.cmd;
       try {
-        const nav = await ensureOnTarget(cmd.target_li_url);
+        // For like_posts, navigate straight to the activity feed URL so the
+        // single background retry lands on the page that executeLike expects.
+        const navTarget = cmd.command_type === 'like_posts'
+          ? cmd.target_li_url.replace(/\/$/, '') + '/recent-activity/all/'
+          : cmd.target_li_url;
+        const nav = await ensureOnTarget(navTarget);
         if (nav.navigated) {
           // Page is reloading — background will retry next poll cycle
           sendResponse({ ok: true, navigating: true });
@@ -1378,6 +1428,7 @@
         let result;
         if (cmd.command_type === 'dm')           result = await executeWithSelfHeal(cmd, executeDm);
         else if (cmd.command_type === 'connect') result = await executeWithSelfHeal(cmd, executeConnect);
+        else if (cmd.command_type === 'like_posts') result = await executeLike(cmd);
         else throw new Error(`unknown_command_type:${cmd.command_type}`);
 
         // Build fingerprint appended to every result: lets the backend prove

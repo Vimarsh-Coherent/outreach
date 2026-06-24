@@ -108,6 +108,58 @@ export default function Watchdog() {
               <tr><td className="py-1 text-slate-500">LinkedIn — extension alive</td><td className="py-1 text-right font-mono">{state?.linkedin_channels_alive ?? 0}</td></tr>
               <tr><td className="py-1 text-slate-500">LinkedIn — heartbeat stale</td><td className="py-1 text-right font-mono text-amber-700">{state?.linkedin_channels_stale ?? 0}</td></tr>
               <tr><td className="py-1 text-slate-500">LinkedIn — command failures today</td><td className={`py-1 text-right font-mono ${(state?.linkedin_command_failures_today ?? 0) > 0 ? 'text-rose-700' : ''}`}>{state?.linkedin_command_failures_today ?? 0}</td></tr>
+              <tr><td className="py-1 text-slate-500">LinkedIn — DM successes today</td><td className="py-1 text-right font-mono text-emerald-700">{state?.linkedin_command_successes_today ?? 0}</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Extension activity panel — inbox scan + manual sends + likes */}
+        <div className="rounded border bg-white p-4 md:col-span-2">
+          <h3 className="font-semibold mb-3">Extension activity (since last restart)</h3>
+          <table className="w-full text-sm">
+            <tbody>
+              <tr>
+                <td className="py-1 text-slate-500 w-1/2">Inbox scans today (scanInbox loop)</td>
+                <td className="py-1 text-right font-mono">{state?.inbox_scans_today ?? 0}</td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-500">LinkedIn replies captured today</td>
+                <td className={`py-1 text-right font-mono ${(state?.inbox_replies_today ?? 0) > 0 ? 'text-emerald-700' : ''}`}>
+                  {state?.inbox_replies_today ?? 0}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-500">Last inbox scan</td>
+                <td className="py-1 text-right font-mono text-slate-600">
+                  {state?.last_inbox_scan_at
+                    ? new Date(state.last_inbox_scan_at).toLocaleTimeString()
+                    : "—"}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-500">Manual LinkedIn DMs queued today (from Leads)</td>
+                <td className="py-1 text-right font-mono">{state?.manual_li_commands_today ?? 0}</td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-500">LinkedIn visit+like completed today</td>
+                <td className="py-1 text-right font-mono text-sky-700">{state?.like_posts_today ?? 0}</td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-500">Last extension success</td>
+                <td className="py-1 text-right font-mono text-slate-600">
+                  {state?.li_last_success_at
+                    ? new Date(state.li_last_success_at).toLocaleTimeString()
+                    : "—"}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1 text-slate-500">Last extension failure</td>
+                <td className={`py-1 text-right font-mono ${state?.li_last_failure_at ? 'text-rose-600' : 'text-slate-400'}`}>
+                  {state?.li_last_failure_at
+                    ? new Date(state.li_last_failure_at).toLocaleTimeString()
+                    : "none"}
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>

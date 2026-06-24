@@ -53,10 +53,12 @@ export default function Sequences() {
   const testNowMut = useMutation({
     mutationFn: async (id: number) => testNow(id),
     onSuccess: (r) => {
-      const act = r.activated ? "Activated + " : "";
-      flash(r.fired > 0
-        ? `⚡ ${act}firing ${r.fired} enrolment${r.fired === 1 ? "" : "s"} now — sends start within ~60s.`
-        : `${r.activated ? "Activated. " : ""}No scheduled enrolments to fire right now.`);
+      const act = r.activated ? "Activated. " : "";
+      if (r.fired > 0) {
+        flash(`${act}Firing ${r.fired} enrolment${r.fired === 1 ? "" : "s"} now — sends start within seconds.`);
+      } else {
+        flash(`${act}No enrolled leads to fire. Enrol leads into this sequence first, then Test now.`);
+      }
       qc.invalidateQueries({ queryKey: ["sequences"] });
     },
     onError: (e: any) => flash(e?.response?.data?.detail || "Test-now failed."),

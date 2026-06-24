@@ -122,6 +122,21 @@ export async function getWhatsAppQr(): Promise<WhatsAppQr> {
   return r.data;
 }
 
+export interface LinkedInChannelCreated {
+  id: number;
+  display_label: string;
+  daily_cap: number;
+  raw_token: string;
+}
+
+export async function createLinkedInChannel(body: {
+  display_label: string;
+  daily_cap: number;
+}): Promise<LinkedInChannelCreated> {
+  const r = await api.post<LinkedInChannelCreated>("/channels/linkedin", body);
+  return r.data;
+}
+
 export async function createWhatsAppChannel(body: {
   display_label: string;
   daily_cap: number;

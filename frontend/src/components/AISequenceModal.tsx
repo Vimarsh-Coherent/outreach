@@ -17,6 +17,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   email: "Email",
   linkedin_dm: "LinkedIn Message",
   linkedin_connect: "LinkedIn Connection",
+  linkedin_like: "LinkedIn Visit + Like",
   call: "Call Task",
   sms: "SMS",
   whatsapp: "WhatsApp",

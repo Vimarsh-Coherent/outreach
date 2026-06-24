@@ -170,4 +170,6 @@ async def send_linkedin(
     )
     session.add(cmd)
     await session.commit()
+    from outreach.services import watchdog_state as _wd
+    _wd.note_manual_li_command(lead_id=req.lead_id, target_url=lead.linkedin_url)
     return {"ok": True, "command_id": cmd.id}

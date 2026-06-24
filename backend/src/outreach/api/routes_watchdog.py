@@ -63,6 +63,14 @@ class WatchdogStateOut(BaseModel):
     li_failure_by_intent: dict[str, int] = {}
     li_fragile_intents: list[str] = []
 
+    # Extension inbox + activity telemetry
+    inbox_scans_today: int = 0
+    inbox_replies_today: int = 0
+    last_inbox_scan_at: datetime | None = None
+    manual_li_commands_today: int = 0
+    last_manual_li_command_at: datetime | None = None
+    like_posts_today: int = 0
+
     events: list[WatchdogEventOut]
 
 
@@ -111,6 +119,12 @@ async def get_state(
         li_fragile_intents=watchdog_state.fragile_intents(),
         consecutive_failures=st.consecutive_failures,
         disabled_until=st.disabled_until,
+        inbox_scans_today=st.inbox_scans_today,
+        inbox_replies_today=st.inbox_replies_today,
+        last_inbox_scan_at=st.last_inbox_scan_at,
+        manual_li_commands_today=st.manual_li_commands_today,
+        last_manual_li_command_at=st.last_manual_li_command_at,
+        like_posts_today=st.like_posts_today,
         events=events,
     )
 

@@ -5,10 +5,12 @@ import {
   ChannelOut,
   EmailPreset,
   IMAPConfig,
+  LinkedInChannelCreated,
   SMTPConfig,
   SecurityMode,
   TestEmailChannelResponse,
   createEmailChannel,
+  createLinkedInChannel,
   createWhatsAppChannel,
   deleteChannel,
   getEmailPresets,
@@ -62,6 +64,94 @@ const WA_STATE_LABEL: Record<string, { text: string; cls: string }> = {
   logged_out: { text: "Logged out — re-scan", cls: "text-amber-700 bg-amber-50 border-amber-200" },
   unavailable: { text: "Sidecar offline", cls: "text-rose-700 bg-rose-50 border-rose-200" },
 };
+
+function LinkedInCard() {
+  const qc = useQueryClient();
+  const [label, setLabel] = useState("My LinkedIn");
+  const [cap, setCap] = useState(40);
+  const [created, setCreated] = useState<LinkedInChannelCreated | null>(null);
+  const [copied, setCopied] = useState<"id" | "token" | null>(null);
+
+  const channels = useQuery({ queryKey: ["channels"], queryFn: listChannels });
+  const existing = channels.data?.filter(c => c.channel_type === "linkedin") ?? [];
+
+  const createMut = useMutation({
+    mutationFn: () => createLinkedInChannel({ display_label: label, daily_cap: cap }),
+    onSuccess: r => { setCreated(r); qc.invalidateQueries({ queryKey: ["channels"] }); },
+  });
+
+  function copy(text: string, which: "id" | "token") {
+    navigator.clipboard.writeText(text);
+    setCopied(which);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  return (
+    <section className="rounded border bg-white p-6 space-y-4">
+      <div className="flex items-center gap-2">
+        <span className="text-sky-600 font-bold text-sm">in</span>
+        <h3 className="font-semibold text-slate-800">LinkedIn Extension Channel</h3>
+      </div>
+      <p className="text-sm text-slate-500">
+        Creates a secure token for the Coherent Outreach Chrome extension. Paste the Channel ID + Token into the extension popup once — the token cannot be retrieved again.
+      </p>
+
+      {existing.length > 0 && (
+        <div className="rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 space-y-1">
+          {existing.map(c => (
+            <div key={c.id} className="flex items-center justify-between">
+              <span>Channel <span className="font-mono font-bold">#{c.id}</span> · {c.display_label} · active</span>
+            </div>
+          ))}
+          <p className="text-xs text-emerald-700 mt-1">To get a new token, delete this channel and create a fresh one below.</p>
+        </div>
+      )}
+
+      {created && (
+        <div className="rounded border border-amber-300 bg-amber-50 p-4 space-y-3 text-sm">
+          <p className="font-semibold text-amber-800">Save these now — the token is shown only once.</p>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600 w-24 shrink-0">Channel ID</span>
+              <code className="flex-1 bg-white border rounded px-2 py-1 font-mono text-xs select-all">{created.id}</code>
+              <button onClick={() => copy(String(created.id), "id")} className="border rounded px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200">
+                {copied === "id" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-slate-600 w-24 shrink-0">Token</span>
+              <code className="flex-1 bg-white border rounded px-2 py-1 font-mono text-xs select-all break-all">{created.raw_token}</code>
+              <button onClick={() => copy(created.raw_token, "token")} className="border rounded px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200">
+                {copied === "token" ? "Copied!" : "Copy"}
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500">Paste both into the extension popup on LinkedIn, then reload the extension.</p>
+        </div>
+      )}
+
+      {existing.length === 0 && !created && (
+        <div className="flex items-end gap-3 flex-wrap">
+          <label className="text-sm">
+            <span className="block text-slate-600 mb-1">Label</span>
+            <input value={label} onChange={e => setLabel(e.target.value)} className="border rounded px-2 py-1.5 w-48" placeholder="My LinkedIn" />
+          </label>
+          <label className="text-sm">
+            <span className="block text-slate-600 mb-1">Daily DM cap</span>
+            <input type="number" min={1} max={200} value={cap} onChange={e => setCap(Number(e.target.value))} className="border rounded px-2 py-1.5 w-24" />
+          </label>
+          <button
+            disabled={createMut.isPending || !label.trim()}
+            onClick={() => createMut.mutate()}
+            className="border rounded px-4 py-1.5 bg-sky-600 text-white hover:bg-sky-700 disabled:bg-slate-300 text-sm"
+          >
+            {createMut.isPending ? "Creating…" : "Create LinkedIn channel"}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function WhatsAppCard() {
   const qc = useQueryClient();
@@ -469,6 +559,7 @@ export default function Channels() {
         )}
       </section>
 
+      <LinkedInCard />
       <WhatsAppCard />
 
       <section className="rounded border bg-white p-6">

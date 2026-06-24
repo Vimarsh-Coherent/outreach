@@ -22,7 +22,7 @@ class AISequenceGenerateRequest(BaseModel):
 
 class AIStepDraft(BaseModel):
     channel: Literal[
-        "email", "linkedin_dm", "linkedin_connect", "call", "sms", "whatsapp"
+        "email", "linkedin_dm", "linkedin_connect", "linkedin_like", "call", "sms", "whatsapp"
     ]
     delay_days: int = Field(default=0, ge=0, le=365)
     delay_hours: int = Field(default=0, ge=0, le=23)

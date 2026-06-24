@@ -11,7 +11,7 @@ class LinkedInCommand(Base):
     __tablename__ = "li_commands"
     __table_args__ = (
         CheckConstraint(
-            "command_type IN ('dm','connect','view_profile')", name="ck_licmd_type"
+            "command_type IN ('dm','connect','view_profile','like_posts')", name="ck_licmd_type"
         ),
         CheckConstraint(
             "status IN ('pending','claimed','done','failed','expired')", name="ck_licmd_status"

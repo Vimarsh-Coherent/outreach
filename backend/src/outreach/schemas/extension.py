@@ -23,7 +23,7 @@ class LinkedInChannelCreated(BaseModel):
 
 class CommandOut(BaseModel):
     id: int
-    command_type: Literal["dm", "connect"]
+    command_type: Literal["dm", "connect", "like_posts"]
     target_li_url: str
     body_text: str
 

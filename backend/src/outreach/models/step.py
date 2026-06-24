@@ -11,7 +11,7 @@ class SequenceStep(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("sequence_id", "step_order", name="uq_steps_order"),
         CheckConstraint(
-            "channel IN ('email','linkedin_dm','linkedin_connect','call','sms','whatsapp')",
+            "channel IN ('email','linkedin_dm','linkedin_connect','call','sms','whatsapp','linkedin_like')",
             name="ck_steps_channel",
         ),
         CheckConstraint("delay_days BETWEEN 0 AND 365", name="ck_steps_delay_days"),

@@ -15,6 +15,7 @@ const CHANNEL_BODY_CAP: Record<StepChannel, number> = {
   email: 16000,
   linkedin_dm: 8000,
   linkedin_connect: 300,
+  linkedin_like: 0,
   call: 4000,
   sms: 1600,
   whatsapp: 4000,
@@ -150,6 +151,7 @@ export default function StepEditModal({
               <option value="email">Email</option>
               <option value="linkedin_dm">LinkedIn DM</option>
               <option value="linkedin_connect">LinkedIn connect (note)</option>
+              <option value="linkedin_like">LinkedIn visit + like posts</option>
               <option value="call">Call task</option>
               <option value="sms">SMS</option>
               <option value="whatsapp">WhatsApp</option>

@@ -38,6 +38,12 @@ class WhatsAppStepCreate(_StepBase):
     body: str = Field(min_length=1, max_length=4000)
 
 
+class LinkedInLikeStepCreate(_StepBase):
+    channel: Literal["linkedin_like"]
+    subject: None = None
+    body: str = Field(default="(visit + like)", max_length=50)
+
+
 class ManualTaskStepCreate(_StepBase):
     channel: Literal["call", "sms"]
     subject: str | None = Field(default=None, max_length=250)
@@ -49,6 +55,7 @@ StepCreate = Annotated[
         EmailStepCreate,
         LinkedInDmStepCreate,
         LinkedInConnectStepCreate,
+        LinkedInLikeStepCreate,
         WhatsAppStepCreate,
         ManualTaskStepCreate,
     ],

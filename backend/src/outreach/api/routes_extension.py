@@ -707,4 +707,7 @@ async def report_replies(
             reply_processor._spawn(reply_processor._bg_classify(ev_id))  # noqa: SLF001
         except Exception:  # noqa: BLE001
             log.exception("failed to spawn sentiment task for event %d", ev_id)
+    from outreach.services import watchdog_state as _wd
+    if inserted > 0:
+        _wd.note_inbox_scan(inserted)
     return InboundReplyResult(matched=matched, inserted=inserted, duplicates=duplicates)
