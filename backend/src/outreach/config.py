@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
 
+    # HubSpot native CRM connector (OAuth). Register a HubSpot app, set its
+    # redirect URI to hubspot_redirect_uri, and put the app's client id/secret
+    # here (or in .env). Empty client_id = connector disabled.
+    hubspot_client_id: str = ""
+    hubspot_client_secret: str = ""
+    hubspot_redirect_uri: str = "http://localhost:8000/api/crm/hubspot/callback"
+    # Where to bounce the browser back to after the OAuth dance completes.
+    frontend_base_url: str = "http://localhost:5173"
+
     # WhatsApp (Baileys sidecar). The sidecar drives a logged-in WhatsApp number
     # over the multi-device protocol and exposes a small REST API; wa_api_url is
     # where the backend reaches it, wa_api_key is the shared secret. Sends flow
@@ -80,13 +89,20 @@ class Settings(BaseSettings):
     rag_min_score: float = 0.35
     rag_chunk_prompt_chars: int = 1000  # full chunk to the LLM → more source text to ground in
 
+    # Conditional branching: how long a step with reply/open/click transitions
+    # waits for those events before evaluating the branch (default path otherwise).
+    branch_wait_hours: int = 48
+
     tick_interval_seconds: int = 60
     imap_poll_interval_seconds: int = 60
     send_concurrency: int = 8
     jitter_max_ms: int = 300_000
 
     li_daily_cap_connect: int = 20
-    li_daily_cap_dm: int = 50  # bumped from 25 for testing (rolling 24h window)
+    li_daily_cap_dm: int = 50  # bumped from 25 for testing
+    # LinkedIn caps reset at local MIDNIGHT in this timezone (calendar-day reset),
+    # so "a new day" always starts at 0 — not a rolling 24h window.
+    li_cap_reset_timezone: str = "Asia/Kolkata"
     email_daily_cap: int = 200
 
     # Connect → wait-for-acceptance → DM gate: how long to wait for a sent
@@ -118,6 +134,12 @@ class Settings(BaseSettings):
 
     # Email
     email_trace_host: str = "outreach.local"
+
+    # Open/click tracking. Pixels + click redirects are served from this PUBLIC
+    # base URL (the recipient's mail client must reach it) — e.g. a Cloudflare
+    # Tunnel / ngrok URL in local dev, or the deployed host. Empty = tracking
+    # disabled regardless of per-sequence flags.
+    tracking_base_url: str = ""
 
     @property
     def qdrant_path(self) -> Path:

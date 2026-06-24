@@ -2,7 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import AbTestPanel from "../components/AbTestPanel";
+import BranchEditor from "../components/BranchEditor";
 import SequenceFlowCanvas from "../components/SequenceFlowCanvas";
+import SpamCheckButton from "../components/SpamCheckButton";
 import { reorderStepsWithTransitionDelays, sortSteps } from "../lib/sequenceSteps";
 import { listLeads } from "../api/leads";
 import {
@@ -16,6 +19,7 @@ import {
   getSequence,
   getSequenceGrounding,
   reorderSteps,
+  updateSequence,
   updateStep,
 } from "../api/sequences";
 
@@ -190,6 +194,12 @@ export default function SequenceEditor() {
     },
   });
 
+  const trackMut = useMutation({
+    mutationFn: async (patch: { track_opens?: boolean; track_clicks?: boolean }) =>
+      updateSequence(sequenceId, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sequence", sequenceId] }),
+  });
+
   if (!seq) return <div className="text-sm text-slate-500">Loading...</div>;
 
   const bodyCap = CHANNEL_BODY_CAP[channel];
@@ -218,6 +228,29 @@ export default function SequenceEditor() {
           {enrolOpen ? "Close" : "Enrol leads"}
         </button>
       </div>
+
+      <section className="card card-pad">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Email tracking</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Records opens/clicks on email steps. Needs a public tracking URL configured on the server.
+            </p>
+          </div>
+          <div className="flex items-center gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={seq.track_opens}
+                onChange={(e) => trackMut.mutate({ track_opens: e.target.checked })} />
+              Track opens
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={seq.track_clicks}
+                onChange={(e) => trackMut.mutate({ track_clicks: e.target.checked })} />
+              Track clicks
+            </label>
+          </div>
+        </div>
+      </section>
 
       <section className="card">
         <div className="card-head">
@@ -340,6 +373,13 @@ export default function SequenceEditor() {
                 <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={8} className={`input font-mono text-xs ${editOver ? "border-rose-400 focus:border-rose-400 focus:ring-rose-100" : ""}`} />
                 <div className="text-xs text-slate-400 mt-1">Tokens: <code className="bg-slate-100 px-1 rounded">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{company}}"}</code> <code className="bg-slate-100 px-1 rounded">{"{{sender_name}}"}</code></div>
               </label>
+
+              <SpamCheckButton subject={s.channel === "email" ? editSubject : null} body={editBody} />
+
+              <BranchEditor sequenceId={sequenceId} step={s} allSteps={seq.steps} />
+
+              <AbTestPanel sequenceId={sequenceId} step={s} />
+
               <div className="flex gap-2">
                 <button
                   disabled={editInvalid || updateStepMut.isPending}

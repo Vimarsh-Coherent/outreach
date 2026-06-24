@@ -60,6 +60,9 @@ class Enrolment(Base, TimestampMixin):
     contact_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
     current_step_order: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    # Branching: explicit next node chosen by a transition (overrides step_order
+    # ordering). NULL = follow linear order.
+    next_step_id: Mapped[int | None] = mapped_column(BigInteger)
     next_send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     runtime_state: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 

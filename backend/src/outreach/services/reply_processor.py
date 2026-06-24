@@ -110,11 +110,29 @@ async def process(session: AsyncSession, parsed: ParsedInbound) -> dict:
     action = "logged"
     if parsed.kind == "reply":
         if enrolment.status == "active":
-            enrolment.status = "stopped_reply"
-            enrolment.stopped_at = datetime.now(timezone.utc)
-            enrolment.stopped_reason = "lead replied"
-            enrolment.next_send_at = None
-            action = "stopped_reply"
+            # Branching: if this enrolment is waiting on a step that has a
+            # 'replied' transition, route the reply through the branch (wake it)
+            # instead of the default stop-on-reply.
+            branch_from = (enrolment.runtime_state or {}).get("branch_from")
+            has_reply_edge = False
+            if branch_from is not None:
+                from outreach.models.step import SequenceStep
+                from outreach.services import branching
+                fs = await session.get(SequenceStep, branch_from)
+                if fs is not None:
+                    has_reply_edge = any(
+                        t.get("on") == "replied"
+                        for t in branching.normalize_transitions(fs.transitions)
+                    )
+            if has_reply_edge:
+                enrolment.next_send_at = datetime.now(timezone.utc)
+                action = "branch_on_reply"
+            else:
+                enrolment.status = "stopped_reply"
+                enrolment.stopped_at = datetime.now(timezone.utc)
+                enrolment.stopped_reason = "lead replied"
+                enrolment.next_send_at = None
+                action = "stopped_reply"
     elif parsed.kind == "bounce":
         if enrolment.status == "active":
             enrolment.status = "stopped_bounce"

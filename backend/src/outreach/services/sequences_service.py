@@ -53,6 +53,7 @@ def _to_out(s: Sequence, step_count: int, active_enrolments: int) -> SequenceOut
         timezone=s.timezone, send_window_start=s.send_window_start,
         send_window_end=s.send_window_end, send_days_mask=s.send_days_mask,
         ai_followups_enabled=s.ai_followups_enabled,
+        track_opens=s.track_opens, track_clicks=s.track_clicks,
         ai_knowledge_id=s.ai_knowledge_id,
         step_count=step_count, active_enrolments=active_enrolments,
         created_at=s.created_at, updated_at=s.updated_at,
@@ -64,6 +65,7 @@ def _step_to_out(s: SequenceStep) -> StepOut:
         id=s.id, sequence_id=s.sequence_id, step_order=s.step_order, channel=s.channel,
         delay_days=s.delay_days, delay_hours=s.delay_hours,
         subject=s.subject, body=s.body, config=s.config,
+        transitions=s.transitions or [],
         created_at=s.created_at, updated_at=s.updated_at,
     )
 
@@ -106,6 +108,7 @@ async def create_sequence(session: AsyncSession, user_id: int, dto: SequenceCrea
         send_window_start=dto.send_window_start, send_window_end=dto.send_window_end,
         send_days_mask=dto.send_days_mask,
         ai_followups_enabled=dto.ai_followups_enabled,
+        track_opens=dto.track_opens, track_clicks=dto.track_clicks,
     )
     session.add(s)
     await session.commit()
@@ -309,8 +312,41 @@ async def add_step(
         subject=getattr(dto, "subject", None),
         body=dto.body,
         config=dto.config,
+        transitions=getattr(dto, "transitions", None) or [],
     )
     session.add(step)
+    await session.commit()
+    await session.refresh(step)
+    return _step_to_out(step)
+
+
+async def set_transitions(
+    session: AsyncSession, user_id: int, sequence_id: int, step_id: int,
+    transitions: list[dict],
+) -> StepOut:
+    """Set a step's branching transitions (managed separately from content edits
+    so A/B / spam / content updates never clobber the branch graph)."""
+    from outreach.services import branching
+
+    s = await session.scalar(
+        select(Sequence).where(Sequence.id == sequence_id, Sequence.user_id == user_id)
+    )
+    if s is None:
+        raise HTTPException(404, "sequence not found")
+    step = await session.scalar(
+        select(SequenceStep).where(SequenceStep.id == step_id, SequenceStep.sequence_id == sequence_id)
+    )
+    if step is None:
+        raise HTTPException(404, "step not found")
+    cleaned = branching.normalize_transitions(transitions)
+    # Targets must be real steps in THIS sequence (or null = stop).
+    valid_ids = set((await session.execute(
+        select(SequenceStep.id).where(SequenceStep.sequence_id == sequence_id)
+    )).scalars().all())
+    for t in cleaned:
+        if t["to_step_id"] is not None and t["to_step_id"] not in valid_ids:
+            raise HTTPException(400, f"to_step_id {t['to_step_id']} is not a step in this sequence")
+    step.transitions = cleaned
     await session.commit()
     await session.refresh(step)
     return _step_to_out(step)

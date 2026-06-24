@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, ForeignKey, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,3 +31,7 @@ class SequenceStep(Base, TimestampMixin):
     subject: Mapped[str | None] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    # Conditional branching (DAG). [] = linear (next step by order). Each entry:
+    # {"on": "replied"|"opened"|"clicked"|"default", "to_step_id": int|null}
+    # (to_step_id null = stop the sequence on that condition).
+    transitions: Mapped[list] = mapped_column(JSONB, default=list, nullable=False, server_default=text("'[]'::jsonb"))

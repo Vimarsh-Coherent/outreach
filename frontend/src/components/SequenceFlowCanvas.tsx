@@ -14,6 +14,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getBezierPath,
   getSmoothStepPath,
   useEdgesState,
   useNodesState,
@@ -117,7 +118,52 @@ function StepNode({ data, selected }: NodeProps) {
   );
 }
 
-const nodeTypes = { trigger: TriggerNode, step: StepNode };
+const BRANCH_COLOR: Record<string, string> = {
+  replied: "#10b981",
+  opened: "#0ea5e9",
+  clicked: "#8b5cf6",
+  default: "#94a3b8",
+};
+
+function StopNode() {
+  return (
+    <div className="rounded-full border-2 border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700">
+      <Handle type="target" position={Position.Top} className="!bg-rose-400" />
+      ⛔ Stop
+    </div>
+  );
+}
+
+const nodeTypes = { trigger: TriggerNode, step: StepNode, stop: StopNode };
+
+interface BranchEdgeData {
+  label: string;
+  color: string;
+  [key: string]: unknown;
+}
+
+function BranchEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps) {
+  const [path, labelX, labelY] = getBezierPath({
+    sourceX, sourceY, targetX, targetY,
+    sourcePosition: Position.Bottom, targetPosition: Position.Top,
+  });
+  const { label, color } = (data ?? {}) as BranchEdgeData;
+  return (
+    <>
+      <BaseEdge id={id} path={path} style={{ stroke: color, strokeWidth: 2, strokeDasharray: "5 4" }} />
+      <EdgeLabelRenderer>
+        <div
+          className="nodrag nopan absolute"
+          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+        >
+          <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-white whitespace-nowrap shadow-sm" style={{ background: color }}>
+            {label}
+          </span>
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  );
+}
 
 // ── custom edge with a wait-label + "insert step here" button ────────────────
 interface InsertEdgeData {
@@ -162,7 +208,7 @@ function InsertEdge({ id, sourceX, sourceY, targetX, targetY, data }: EdgeProps)
   );
 }
 
-const edgeTypes = { insert: InsertEdge };
+const edgeTypes = { insert: InsertEdge, branch: BranchEdge };
 
 // ── layout: build nodes + edges from the linear step list ────────────────────
 function buildGraph(
@@ -183,6 +229,8 @@ function buildGraph(
   ];
   const edges: Edge[] = [];
 
+  const nodeIds = new Set(sorted.map(s => `step-${s.id}`));
+
   sorted.forEach((step, i) => {
     const id = `step-${step.id}`;
     nodes.push({
@@ -193,18 +241,52 @@ function buildGraph(
       selected: selectedStepId === step.id,
       dragHandle: ".seq-drag-handle",
     });
-    const sourceId = i === 0 ? "trigger" : `step-${sorted[i - 1].id}`;
-    edges.push({
-      id: `e-${sourceId}-${id}`,
-      source: sourceId,
-      target: id,
-      type: "insert",
-      data: {
-        // The wait shown on the connector is the delay BEFORE the step it points to.
-        delayLabel: formatStepDelay(step.delay_days, step.delay_hours),
-        insertIndex: i,
-        onInsert: cb.onInsert,
-      },
+
+    const transitions = Array.isArray(step.transitions) ? step.transitions : [];
+
+    // Incoming linear connector. The entry edge (trigger → first step) always
+    // shows; between steps it's drawn only when the PREVIOUS step doesn't branch
+    // (a branched step's flow is defined by its branch edges instead).
+    const prev = sorted[i - 1];
+    const prevBranches = i > 0 && Array.isArray(prev.transitions) && prev.transitions.length > 0;
+    if (i === 0 || !prevBranches) {
+      const sourceId = i === 0 ? "trigger" : `step-${prev.id}`;
+      edges.push({
+        id: `e-${sourceId}-${id}`,
+        source: sourceId,
+        target: id,
+        type: "insert",
+        data: {
+          delayLabel: formatStepDelay(step.delay_days, step.delay_hours),
+          insertIndex: i,
+          onInsert: cb.onInsert,
+        },
+      });
+    }
+
+    // Outgoing branch edges (the DAG): one per transition, condition-labeled.
+    transitions.forEach((t, ti) => {
+      const cond = String(t.on);
+      const color = BRANCH_COLOR[cond] ?? BRANCH_COLOR.default;
+      const targetId = t.to_step_id != null ? `step-${t.to_step_id}` : null;
+      if (targetId && nodeIds.has(targetId)) {
+        edges.push({
+          id: `b-${step.id}-${ti}`, source: id, target: targetId, type: "branch",
+          data: { label: cond, color },
+        });
+      } else {
+        // Stop branch → a terminal Stop node to the side of this step.
+        const stopId = `stop-${step.id}-${ti}`;
+        nodes.push({
+          id: stopId, type: "stop",
+          position: { x: X + 360, y: Y_FIRST + i * Y_GAP + 30 + ti * 46 },
+          data: {}, draggable: false, selectable: false,
+        });
+        edges.push({
+          id: `b-${step.id}-${ti}`, source: id, target: stopId, type: "branch",
+          data: { label: `${cond} → stop`, color },
+        });
+      }
     });
   });
   return { nodes, edges };
@@ -237,7 +319,7 @@ function FlowInner({
   const sig = useMemo(
     () =>
       sortSteps(steps)
-        .map(s => `${s.id}:${s.step_order}:${s.channel}:${s.delay_days}:${s.delay_hours}:${(s.subject ?? "").length}:${s.body.length}`)
+        .map(s => `${s.id}:${s.step_order}:${s.channel}:${s.delay_days}:${s.delay_hours}:${(s.subject ?? "").length}:${s.body.length}:${(s.transitions ?? []).map(t => `${t.on}>${t.to_step_id}`).join(",")}`)
         .join("|") + `#${selectedStepId}`,
     [steps, selectedStepId],
   );

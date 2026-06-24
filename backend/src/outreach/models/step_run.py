@@ -50,3 +50,6 @@ class StepRun(Base, TimestampMixin):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     provider_message_id: Mapped[str | None] = mapped_column(String(200))
     error_message: Mapped[str | None] = mapped_column(Text)
+    # Which A/B variant this run sent (NULL = single-message step). Used to
+    # attribute opens/clicks/replies back to a variant for winner stats.
+    variant_label: Mapped[str | None] = mapped_column(String(40))

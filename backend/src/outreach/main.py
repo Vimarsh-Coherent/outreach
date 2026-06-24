@@ -6,17 +6,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from outreach.api import (
     routes_ai_sequences,
     routes_analytics,
+    routes_api_keys,
     routes_channels,
+    routes_crm,
     routes_dashboard,
     routes_enrolments,
     routes_extension,
     routes_followups,
     routes_health,
     routes_leads,
+    routes_public,
     routes_sequence_rag,
     routes_sequences,
     routes_timeline,
+    routes_tools,
+    routes_tracking,
     routes_watchdog,
+    routes_webhooks,
     routes_whatsapp,
 )
 from outreach.config import get_settings
@@ -67,4 +73,10 @@ app.include_router(routes_followups.router)
 app.include_router(routes_extension.router)
 app.include_router(routes_watchdog.router)
 app.include_router(routes_whatsapp.router)
+app.include_router(routes_tracking.router)
+app.include_router(routes_tools.router)
+app.include_router(routes_webhooks.router)
+app.include_router(routes_api_keys.router)
+app.include_router(routes_public.router)
+app.include_router(routes_crm.router)
 app.include_router(routes_analytics.router)

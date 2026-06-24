@@ -34,3 +34,8 @@ class Sequence(Base, TimestampMixin):
 
     ai_followups_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_knowledge_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Email open/click tracking (per-sequence opt-in; off by default for
+    # deliverability). Only takes effect when settings.tracking_base_url is set.
+    track_opens: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    track_clicks: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

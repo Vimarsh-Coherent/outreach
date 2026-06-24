@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,7 @@ log = logging.getLogger("outreach.workers")
 # (or the recovery sweep firing concurrently) never collide.
 _CLAIM_SQL = text(
     """
-    SELECT e.id, e.sequence_id, e.user_id, e.lead_id, e.current_step_order
+    SELECT e.id, e.sequence_id, e.user_id, e.lead_id, e.current_step_order, e.runtime_state
       FROM outreach.enrolments e
       JOIN outreach.sequences s ON s.id = e.sequence_id
      WHERE e.status = 'active'
@@ -84,6 +84,67 @@ async def reclaim_stale_li_commands(session: AsyncSession, minutes: int) -> list
     return ids
 
 
+async def _resolve_branch(session: AsyncSession, enrol_id: int, from_step_id: int) -> tuple[str, int | None]:
+    """Evaluate a finished step's transitions against the events observed since
+    it was sent. Returns ('step', id) | ('stop', None) | ('continue', None)."""
+    from outreach.services import branching
+
+    from_step = await session.get(SequenceStep, from_step_id)
+    transitions = branching.normalize_transitions(from_step.transitions if from_step else [])
+    if not transitions:
+        return ("continue", None)
+
+    run = await session.scalar(
+        select(StepRun)
+        .where(
+            StepRun.enrolment_id == enrol_id,
+            StepRun.step_id == from_step_id,
+            StepRun.status == "sent",
+        )
+        .order_by(StepRun.sent_at.desc())
+        .limit(1)
+    )
+    replied = opened = clicked = False
+    if run is not None and run.sent_at is not None:
+        types = set((await session.execute(text(
+            "SELECT DISTINCT event_type FROM outreach.events "
+            "WHERE enrolment_id = :e AND event_type IN ('reply','open','click') "
+            "  AND occurred_at >= :since"
+        ), {"e": enrol_id, "since": run.sent_at})).scalars().all())
+        replied, opened, clicked = "reply" in types, "open" in types, "click" in types
+    return branching.evaluate(transitions, replied=replied, opened=opened, clicked=clicked)
+
+
+async def _resolve_run_step(
+    session: AsyncSession, enrol_id: int, sequence_id: int,
+    current_step_order: int, runtime_state: dict | None,
+) -> SequenceStep | None:
+    """The step to run next. Resolves a pending branch (runtime_state.branch_from)
+    first; otherwise falls back to the linear next step by order."""
+    branch_from = (runtime_state or {}).get("branch_from")
+    if branch_from is not None:
+        kind, target = await _resolve_branch(session, enrol_id, branch_from)
+        # Clear the branch marker (JSONB key delete) regardless of outcome.
+        await session.execute(text(
+            "UPDATE outreach.enrolments SET runtime_state = runtime_state - 'branch_from' WHERE id = :id"
+        ), {"id": enrol_id})
+        if kind == "stop":
+            return None
+        if kind == "step" and target is not None:
+            return await session.get(SequenceStep, target)
+        # 'continue' → fall through to linear
+
+    return await session.scalar(
+        select(SequenceStep)
+        .where(
+            SequenceStep.sequence_id == sequence_id,
+            SequenceStep.step_order > current_step_order,
+        )
+        .order_by(SequenceStep.step_order.asc())
+        .limit(1)
+    )
+
+
 async def claim_due(session: AsyncSession, limit: int = 500) -> list[dict]:
     """Phase 1: lock + clear next_send_at + insert reserving step_run.
 
@@ -97,16 +158,10 @@ async def claim_due(session: AsyncSession, limit: int = 500) -> list[dict]:
 
     claims: list[dict] = []
     now = datetime.now(timezone.utc)
-    for enrol_id, sequence_id, _user_id, _lead_id, current_step_order in claimed_rows:
-        # Identify the next step to send.
-        step = await session.scalar(
-            select(SequenceStep)
-            .where(
-                SequenceStep.sequence_id == sequence_id,
-                SequenceStep.step_order > current_step_order,
-            )
-            .order_by(SequenceStep.step_order.asc())
-            .limit(1)
+    for enrol_id, sequence_id, _user_id, _lead_id, current_step_order, runtime_state in claimed_rows:
+        # Identify the next step to send — resolving a pending branch if any.
+        step = await _resolve_run_step(
+            session, enrol_id, sequence_id, current_step_order, runtime_state,
         )
         if step is None:
             # Sequence completed.
@@ -161,6 +216,35 @@ async def _advance_enrolment(
         return
     e.current_step_order = finished_step_order
     e.runtime_state = {**(e.runtime_state or {}), "consecutive_failures": 0}
+
+    # ---- Conditional branching ----
+    # If the finished step has transitions, hold the enrolment in a "branch wait"
+    # so reply/open/click events can land, then resolve the branch at claim time.
+    from outreach.services import branching
+    finished_step = await session.scalar(
+        select(SequenceStep).where(
+            SequenceStep.sequence_id == e.sequence_id,
+            SequenceStep.step_order == finished_step_order,
+        )
+    )
+    transitions = branching.normalize_transitions(
+        finished_step.transitions if finished_step else []
+    )
+    if transitions:
+        wait_h = (
+            get_settings().branch_wait_hours
+            if branching.needs_branch_wait(transitions) else 0
+        )
+        e.runtime_state = {**e.runtime_state, "branch_from": finished_step.id}
+        e.next_step_id = None
+        slot = next_valid_slot(
+            base=datetime.now(timezone.utc) + timedelta(hours=wait_h),
+            delay_days=0, delay_hours=0,
+            tz_name=seq.timezone, window_start=seq.send_window_start,
+            window_end=seq.send_window_end, days_mask=seq.send_days_mask,
+        )
+        e.next_send_at = add_jitter(slot)
+        return
 
     next_step = await session.scalar(
         select(SequenceStep)
@@ -388,9 +472,10 @@ async def process_one(claim: dict) -> dict:
             # existed but were enforced NOWHERE — the only limit was the
             # channel-level daily_cap (default 100!), charged after the fact.
             # Unbounded connects/DMs per day is how accounts get restricted, so
-            # enforce here at mint time: count this user's commands of this
-            # type in the rolling 24h window; at cap, defer a few hours
-            # without burning the lead or advancing the step.
+            # enforce here at mint time: count this user's commands of this type
+            # sent SINCE LOCAL MIDNIGHT (calendar-day reset, not a rolling 24h
+            # window) — so a new day always starts fresh. At cap, defer to the
+            # next day without burning the lead or advancing the step.
             command_type = "dm" if step.channel == "linkedin_dm" else "connect"
             settings = get_settings()
             type_cap = (
@@ -400,27 +485,32 @@ async def process_one(claim: dict) -> dict:
             used = int(await session.scalar(text(
                 "SELECT COUNT(*) FROM outreach.li_commands "
                 "WHERE user_id = :uid AND command_type = :ct "
-                "  AND created_at >= NOW() - INTERVAL '24 hours' "
+                "  AND created_at >= date_trunc('day', NOW() AT TIME ZONE :tz) AT TIME ZONE :tz "
                 "  AND status NOT IN ('failed','expired')"
-            ), {"uid": enrolment.user_id, "ct": command_type}) or 0)
+            ), {
+                "uid": enrolment.user_id, "ct": command_type,
+                "tz": settings.li_cap_reset_timezone,
+            }) or 0)
             if used >= type_cap:
-                from datetime import timedelta
                 run.status = "failed"
                 run.error_message = (
-                    f"linkedin daily {command_type} cap reached ({type_cap}/24h) — deferred"
+                    f"linkedin daily {command_type} cap reached ({type_cap}/day) — "
+                    "deferred to tomorrow"
                 )
                 seq_for_window = await session.scalar(
                     select(Sequence).where(Sequence.id == enrolment.sequence_id)
                 )
-                cap_base = datetime.now(timezone.utc) + timedelta(hours=3)
+                # Cap clears at local midnight, so retry tomorrow's first valid
+                # slot rather than burning attempts every few hours until then.
+                now = datetime.now(timezone.utc)
                 enrolment.next_send_at = (
                     next_valid_slot(
-                        base=cap_base, delay_days=0, delay_hours=0,
+                        base=now, delay_days=1, delay_hours=0,
                         tz_name=seq_for_window.timezone,
                         window_start=seq_for_window.send_window_start,
                         window_end=seq_for_window.send_window_end,
                         days_mask=seq_for_window.send_days_mask,
-                    ) if seq_for_window is not None else cap_base
+                    ) if seq_for_window is not None else now + timedelta(hours=12)
                 )
                 await session.commit()
                 return {"step_run_id": step_run_id, "result": "li_cap_hit"}
@@ -604,14 +694,27 @@ async def process_one(claim: dict) -> dict:
     # ---- SMTP call OUTSIDE any DB transaction ----
     message_id = make_message_id(step_run_id)
     snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
-    rendered_subject = render(step.subject, snapshot)
-    rendered_body = render(step.body, snapshot)
+
+    # A/B variant selection (deterministic per enrolment). When the step has a
+    # configured A/B test this overrides the subject/body template and records
+    # which variant was sent; otherwise it's the plain step template.
+    from outreach.services import ab_testing
+    _variant = ab_testing.resolve_message(
+        step_config=step.config or {},
+        default_subject=step.subject,
+        default_body=step.body,
+        seed=f"{enrolment.id}:{step.id}",
+    )
+    variant_label = _variant.variant_label
+    rendered_subject = render(_variant.subject, snapshot)
+    rendered_body = render(_variant.body, snapshot)
 
     # Auto-draft for sequences with AI follow-ups enabled, starting at step >= 2
-    # (step 1 is the cold opener — no prior context to personalise against).
+    # (step 1 is the cold opener — no prior context). Skipped for A/B variants so
+    # the test measures the variant copy, not an AI rewrite of it.
     async with SessionLocal() as session_seq:
         seq = await session_seq.scalar(select(Sequence).where(Sequence.id == enrolment.sequence_id))
-    if seq is not None and seq.ai_followups_enabled and step.step_order >= 2:
+    if variant_label is None and seq is not None and seq.ai_followups_enabled and step.step_order >= 2:
         try:
             from outreach.services.followup_agent import draft_for_lead
             async with SessionLocal() as session_draft:
@@ -635,6 +738,17 @@ async def process_one(claim: dict) -> dict:
     async with SessionLocal() as session2:
         in_reply_to, references = await _build_threading_headers(session2, enrolment.id)
 
+    # Open/click tracking: opt-in per sequence, and only when a public
+    # tracking_base_url is configured (the recipient must be able to reach it).
+    html_body = None
+    tracking_base = get_settings().tracking_base_url.strip()
+    if tracking_base and seq is not None and (seq.track_opens or seq.track_clicks):
+        from outreach.services import email_tracking
+        html_body = email_tracking.build_tracked_html(
+            rendered_body, step_run_id=step_run_id, base_url=tracking_base,
+            track_opens=seq.track_opens, track_clicks=seq.track_clicks,
+        )
+
     result = await send_email(
         cfg=cfg,
         to_address=to_address,
@@ -643,6 +757,7 @@ async def process_one(claim: dict) -> dict:
         message_id=message_id,
         in_reply_to=in_reply_to,
         references=references,
+        html_body=html_body,
     )
 
     # ---- finalise ----
@@ -654,11 +769,12 @@ async def process_one(claim: dict) -> dict:
             run.status = "sent"
             run.sent_at = datetime.now(timezone.utc)
             run.provider_message_id = message_id
+            run.variant_label = variant_label
             session3.add(Event(
                 enrolment_id=run.enrolment_id, step_run_id=run.id,
                 event_type="delivered", channel="email",
                 external_id=message_id,
-                payload={"to": to_address, "subject": rendered_subject[:200]},
+                payload={"to": to_address, "subject": rendered_subject[:200], "variant": variant_label},
                 occurred_at=run.sent_at,
             ))
             await _advance_enrolment(session3, run.enrolment_id, step.step_order)

@@ -12,7 +12,7 @@ const TIERS: { id: WatchdogTier; label: string; cadence: string; description: st
   { id: "quick_check",        label: "Quick check",     cadence: "every 5 min",  description: "Backend health + DB reachability" },
   { id: "channel_patrol",     label: "Channel patrol",  cadence: "every 30 min", description: "Live SMTP / IMAP probes + extension heartbeat freshness" },
   { id: "stuck_state_sweep",  label: "Stuck-state sweep", cadence: "every 1 hour",  description: "Auto-heals stuck LinkedIn commands + re-queues unclassified replies" },
-  { id: "deep_verify",        label: "Deep verify",     cadence: "every 6 hours", description: "Anthropic + OpenAI + Qdrant liveness" },
+  { id: "deep_verify",        label: "Deep verify",     cadence: "every 6 hours", description: "LLM (active provider) + OpenAI + Qdrant liveness" },
   { id: "daily_reset",        label: "Daily reset",     cadence: "every 24 hours", description: "Roll cap windows, daily summary" },
 ];
 
@@ -81,7 +81,7 @@ export default function Watchdog() {
           <div className="mt-2 flex items-center gap-3"><StatusDot ok={!!state?.db_alive} /><span className="text-sm">{state?.db_alive ? "Online" : "Down"}</span></div>
         </div>
         <div className="card card-pad">
-          <div className="stat-label">Anthropic</div>
+          <div className="stat-label">LLM (active provider)</div>
           <div className="mt-2 flex items-center gap-3"><StatusDot ok={!!state?.anthropic_alive} /><span className="text-sm">{state?.anthropic_alive ? "Reachable" : "Unverified"}</span></div>
         </div>
         <div className="card card-pad">

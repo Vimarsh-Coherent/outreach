@@ -27,6 +27,7 @@ async def send_email(
     in_reply_to: str | None = None,
     references: list[str] | None = None,
     headers: dict[str, str] | None = None,
+    html_body: str | None = None,
 ) -> SendResult:
     use_tls = cfg.security == "ssl_tls"
     use_starttls = cfg.security == "starttls"
@@ -45,6 +46,10 @@ async def send_email(
         for k, v in headers.items():
             msg[k] = v
     msg.set_content(body)
+    # Tracked sends attach an HTML alternative (pixel + rewritten links); the
+    # plain-text part above stays the fallback.
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
 
     client = aiosmtplib.SMTP(
         hostname=cfg.host,

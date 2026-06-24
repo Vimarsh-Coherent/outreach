@@ -4,7 +4,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from outreach.config import get_settings
-from outreach.workers import dispatcher, imap_poller, recovery, watchdog
+from outreach.workers import crm_sync, dispatcher, imap_poller, recovery, watchdog, webhook_worker
 
 log = logging.getLogger("outreach.scheduler")
 
@@ -50,6 +50,10 @@ def start() -> None:
     sched.add_job(watchdog.stuck_state_sweep,  "interval", hours=1,    id="wd_stuck",   max_instances=1, coalesce=True)
     sched.add_job(watchdog.deep_verify,        "interval", hours=6,    id="wd_deep",    max_instances=1, coalesce=True)
     sched.add_job(watchdog.daily_reset,        "interval", hours=24,   id="wd_daily",   max_instances=1, coalesce=True)
+    # Outbound webhook outbox: fan out new events + deliver pending with retries.
+    sched.add_job(webhook_worker.tick,         "interval", seconds=30, id="webhooks",    max_instances=1, coalesce=True)
+    # Native CRM (HubSpot) outbound sync: replies -> contact + note.
+    sched.add_job(crm_sync.tick,               "interval", seconds=60, id="crm_sync",    max_instances=1, coalesce=True)
     sched.start()
     _scheduler = sched
     log.info(

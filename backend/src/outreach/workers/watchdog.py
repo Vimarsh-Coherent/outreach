@@ -509,21 +509,22 @@ async def stuck_state_sweep() -> dict:
 # ──────────────────────────────────────────────────────────────────────────
 # Tier 4 — Deep verify (every 6 hours)
 # ──────────────────────────────────────────────────────────────────────────
-async def _probe_anthropic() -> tuple[bool, str]:
-    settings = get_settings()
-    if not settings.anthropic_api_key:
-        return False, "no ANTHROPIC_API_KEY"
+async def _probe_llm() -> tuple[bool, str]:
+    """Probe the LLM the app actually uses — the active provider (DeepSeek when
+    its key is set, else Anthropic). Avoids false alarms from the usage-capped
+    Anthropic key when generation/sentiment all run on DeepSeek."""
+    from outreach.services import llm_client
+
+    provider = llm_client.active_provider()
+    if provider is None:
+        return False, "no LLM API key configured"
     try:
-        from anthropic import AsyncAnthropic
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-        r = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=32,
-            messages=[{"role": "user", "content": "Say the single word OK."}],
+        r = await llm_client.complete(
+            system="Reply with the single word OK.", user="OK", max_tokens=8,
         )
-        return True, f"resp {len(r.content)} blocks"
+        return bool(r.text), f"{provider}: ok"
     except Exception as e:  # noqa: BLE001
-        return False, f"{type(e).__name__}: {str(e)[:80]}"
+        return False, f"{provider}: {type(e).__name__}: {str(e)[:80]}"
 
 
 async def _probe_openai() -> tuple[bool, str]:
@@ -543,15 +544,22 @@ async def _probe_openai() -> tuple[bool, str]:
 
 
 async def _probe_qdrant() -> tuple[bool, str]:
-    from outreach.services import vault
-    return vault.probe_qdrant()
+    """Probe the vector store the app actually uses for sequence RAG
+    (qdrant_store — embedded MiniLM, in-process), not the legacy vault path."""
+    from outreach.services import qdrant_store
+
+    try:
+        ok = await asyncio.to_thread(qdrant_store.is_available)
+        return (ok, "reachable" if ok else "get_collections failed")
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {str(e)[:80]}"
 
 
 async def deep_verify() -> dict:
     if watchdog_state.is_disabled():
         return {"skipped": "circuit_breaker_open"}
     st = watchdog_state.state()
-    a_ok, a_detail = await _probe_anthropic()
+    a_ok, a_detail = await _probe_llm()
     o_ok, o_detail = await _probe_openai()
     q_ok, q_detail = await _probe_qdrant()
     st.anthropic_alive = a_ok

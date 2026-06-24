@@ -11,6 +11,7 @@ class _StepBase(BaseModel):
     delay_days: int = Field(default=0, ge=0, le=365)
     delay_hours: int = Field(default=0, ge=0, le=23)
     config: dict = Field(default_factory=dict)
+    transitions: list[dict] = Field(default_factory=list)
 
 
 class EmailStepCreate(_StepBase):
@@ -66,8 +67,13 @@ class StepOut(BaseModel):
     subject: str | None
     body: str
     config: dict
+    transitions: list = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class TransitionsUpdate(BaseModel):
+    transitions: list[dict] = Field(default_factory=list)
 
 
 # ---------- Sequences ----------
@@ -83,6 +89,8 @@ class SequenceCreate(BaseModel):
     send_window_end: time = time(18, 0)
     send_days_mask: int = Field(default=31, ge=1, le=127)
     ai_followups_enabled: bool = False
+    track_opens: bool = False
+    track_clicks: bool = False
 
 
 class SequenceUpdate(BaseModel):
@@ -93,10 +101,16 @@ class SequenceUpdate(BaseModel):
     send_window_end: time | None = None
     send_days_mask: int | None = Field(default=None, ge=1, le=127)
     ai_followups_enabled: bool | None = None
+    track_opens: bool | None = None
+    track_clicks: bool | None = None
 
 
 class StatusChange(BaseModel):
     status: SequenceStatus
+
+
+class AbPromoteRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=40)
 
 
 # Quick channels-based generator (Sequences page → "✨ Generate with AI" panel).
@@ -122,6 +136,8 @@ class SequenceOut(BaseModel):
     send_window_end: time
     send_days_mask: int
     ai_followups_enabled: bool
+    track_opens: bool = False
+    track_clicks: bool = False
     ai_knowledge_id: str | None = None
     step_count: int
     active_enrolments: int
