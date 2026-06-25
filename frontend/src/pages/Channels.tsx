@@ -582,12 +582,15 @@ export default function Channels() {
             <tbody>
               {channels.map((c: ChannelOut) => {
                 const isWa = c.channel_type === "whatsapp";
+                const isLi = c.channel_type === "linkedin";
                 const isPhone = isWa && /^[+\d\s\-()]{7,}$/.test(c.display_label.trim());
                 const primaryLabel = isPhone ? "WhatsApp" : c.display_label;
                 const subLabel = isPhone ? c.display_label : null;
-                const typeLabel = isWa ? "WhatsApp" : "Email";
+                const typeLabel = isWa ? "WhatsApp" : isLi ? "LinkedIn" : "Email";
                 const typeCls = isWa
                   ? "bg-green-50 text-green-700 border-green-200"
+                  : isLi
+                  ? "bg-sky-50 text-sky-700 border-sky-200"
                   : "bg-blue-50 text-blue-700 border-blue-200";
                 return (
                   <tr key={c.id} className="border-t">

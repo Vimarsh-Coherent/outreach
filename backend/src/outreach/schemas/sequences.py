@@ -10,6 +10,7 @@ class _StepBase(BaseModel):
     step_order: int | None = Field(default=None, ge=1, le=50)
     delay_days: int = Field(default=0, ge=0, le=365)
     delay_hours: int = Field(default=0, ge=0, le=23)
+    delay_minutes: int = Field(default=0, ge=0, le=59)
     config: dict = Field(default_factory=dict)
 
 
@@ -70,6 +71,7 @@ class StepOut(BaseModel):
     channel: str
     delay_days: int
     delay_hours: int
+    delay_minutes: int
     subject: str | None
     body: str
     config: dict

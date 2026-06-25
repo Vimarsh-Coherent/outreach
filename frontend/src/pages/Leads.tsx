@@ -13,6 +13,7 @@ import {
   formatAxiosError,
   listLeads,
   previewUpload,
+  updateLead,
 } from "../api/leads";
 import { DraftResponse, SendResponse, draftFollowup, sendFollowup, sendLinkedInDm } from "../api/followups";
 
@@ -462,6 +463,27 @@ export default function Leads() {
     onError: e => setError(formatAxiosError(e)),
   });
 
+  const [editingLead, setEditingLead] = useState<LeadOut | null>(null);
+  const [editForm, setEditForm] = useState<Partial<LeadOut>>({});
+  const editMut = useMutation({
+    mutationFn: async () => updateLead(editingLead!.id, editForm),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["leads"] }); setEditingLead(null); },
+    onError: (e: any) => alert(e?.response?.data?.detail || "Update failed"),
+  });
+
+  function openEdit(lead: LeadOut) {
+    setEditingLead(lead);
+    setEditForm({
+      first_name: lead.first_name ?? "",
+      last_name: lead.last_name ?? "",
+      email: lead.email ?? "",
+      phone: lead.phone ?? "",
+      linkedin_url: lead.linkedin_url ?? "",
+      company: lead.company ?? "",
+      title: lead.title ?? "",
+    });
+  }
+
   const deleteMut = useMutation({
     mutationFn: async (id: number) => deleteLead(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["leads"] }),
@@ -689,7 +711,8 @@ export default function Leads() {
                           <span className="text-slate-300 text-xs">—</span>
                         )}
                       </td>
-                      <td className="py-2">
+                      <td className="py-2 flex items-center gap-3">
+                        <button onClick={() => openEdit(l)} className="text-sky-600 hover:underline text-xs">edit</button>
                         <button onClick={() => { if (confirm("Delete this lead?")) deleteMut.mutate(l.id); }} className="text-rose-600 hover:underline text-xs">delete</button>
                       </td>
                     </tr>
@@ -707,6 +730,47 @@ export default function Leads() {
           </>
         )}
       </section>
+
+      {editingLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="font-semibold text-slate-800">Edit lead</h2>
+              <button onClick={() => setEditingLead(null)} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+            </div>
+            <div className="p-6 grid grid-cols-2 gap-4 text-sm">
+              {([
+                ["first_name", "First name"],
+                ["last_name",  "Last name"],
+                ["email",      "Email"],
+                ["phone",      "Phone"],
+                ["linkedin_url","LinkedIn URL"],
+                ["company",    "Company"],
+                ["title",      "Title"],
+              ] as [keyof LeadOut, string][]).map(([key, label]) => (
+                <label key={key} className={key === "email" || key === "linkedin_url" ? "col-span-2" : ""}>
+                  <span className="block text-slate-500 mb-1">{label}</span>
+                  <input
+                    value={(editForm[key] as string) ?? ""}
+                    onChange={e => setEditForm(f => ({ ...f, [key]: e.target.value }))}
+                    className="w-full border rounded px-2 py-1.5"
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t">
+              <button onClick={() => setEditingLead(null)} className="border rounded px-4 py-1.5 text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button
+                disabled={editMut.isPending}
+                onClick={() => editMut.mutate()}
+                className="border rounded px-4 py-1.5 bg-sky-600 text-white hover:bg-sky-700 disabled:bg-slate-300"
+              >
+                {editMut.isPending ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

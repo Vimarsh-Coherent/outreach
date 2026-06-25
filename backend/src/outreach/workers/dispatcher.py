@@ -181,6 +181,7 @@ async def _advance_enrolment(
             base=datetime.now(timezone.utc),
             delay_days=next_step.delay_days,
             delay_hours=next_step.delay_hours,
+            delay_minutes=next_step.delay_minutes,
             tz_name=seq.timezone,
             window_start=seq.send_window_start,
             window_end=seq.send_window_end,

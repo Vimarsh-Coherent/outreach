@@ -77,6 +77,7 @@ export default function SequenceEditor() {
   const [body, setBody] = useState("");
   const [delayDays, setDelayDays] = useState(0);
   const [delayHours, setDelayHours] = useState(0);
+  const [delayMinutes, setDelayMinutes] = useState(0);
 
   const addMut = useMutation({
     mutationFn: async () => {
@@ -85,6 +86,7 @@ export default function SequenceEditor() {
         body: channel === "linkedin_like" ? "(visit + like)" : body,
         delay_days: delayDays,
         delay_hours: delayHours,
+        delay_minutes: delayMinutes,
         subject: channel === "email" ? subject : null,
       };
       return addStep(sequenceId, payload);
@@ -107,6 +109,7 @@ export default function SequenceEditor() {
   const [editBody, setEditBody] = useState("");
   const [editDelayDays, setEditDelayDays] = useState(0);
   const [editDelayHours, setEditDelayHours] = useState(0);
+  const [editDelayMinutes, setEditDelayMinutes] = useState(0);
 
   const startEdit = (s: StepOut) => {
     setEditingId(s.id);
@@ -114,15 +117,17 @@ export default function SequenceEditor() {
     setEditBody(s.body);
     setEditDelayDays(s.delay_days);
     setEditDelayHours(s.delay_hours);
+    setEditDelayMinutes(s.delay_minutes);
   };
 
   const updateStepMut = useMutation({
     mutationFn: async (s: StepOut) => {
       const payload: StepCreate = {
         channel: s.channel,
-        body: editBody,
+        body: s.channel === "linkedin_like" ? "(visit + like)" : editBody,
         delay_days: editDelayDays,
         delay_hours: editDelayHours,
+        delay_minutes: editDelayMinutes,
         subject: s.channel === "email" ? editSubject : null,
       };
       return updateStep(sequenceId, s.id, payload);
@@ -238,7 +243,8 @@ export default function SequenceEditor() {
               const editCap = CHANNEL_BODY_CAP[s.channel as StepChannel];
               const editOver = editBody.length > editCap;
               const editInvalid =
-                !editBody.trim() || editOver || (s.channel === "email" && !editSubject.trim());
+                (s.channel !== "linkedin_like" && (!editBody.trim() || editOver)) ||
+                (s.channel === "email" && !editSubject.trim());
               return (
               <li key={s.id} className="border rounded p-3 bg-slate-50">
                 <div className="flex items-center justify-between mb-1">
@@ -259,7 +265,7 @@ export default function SequenceEditor() {
                         </span>
                       );
                     })()}
-                    <span>delay {s.delay_days}d {s.delay_hours}h</span>
+                    <span>delay {s.delay_days}d {s.delay_hours}h {s.delay_minutes}m</span>
                     {editing ? (
                       <button onClick={() => setEditingId(null)} className="text-slate-600 hover:underline">cancel</button>
                     ) : (
@@ -280,6 +286,10 @@ export default function SequenceEditor() {
                         <span className="block text-slate-500 mb-1">Delay hours</span>
                         <input type="number" min={0} max={23} value={editDelayHours} onChange={e => setEditDelayHours(Number(e.target.value))} className="w-full border rounded px-2 py-1" />
                       </label>
+                      <label className="col-span-3">
+                        <span className="block text-slate-500 mb-1">Delay mins</span>
+                        <input type="number" min={0} max={59} value={editDelayMinutes} onChange={e => setEditDelayMinutes(Number(e.target.value))} className="w-full border rounded px-2 py-1" />
+                      </label>
                     </div>
                     {s.channel === "email" && (
                       <label className="block text-xs">
@@ -287,6 +297,7 @@ export default function SequenceEditor() {
                         <input value={editSubject} onChange={e => setEditSubject(e.target.value)} maxLength={250} className="w-full border rounded px-2 py-1" />
                       </label>
                     )}
+                    {s.channel !== "linkedin_like" && (
                     <label className="block text-xs">
                       <span className="block text-slate-500 mb-1">
                         Body <span className={`ml-1 ${editOver ? "text-rose-600" : "text-slate-400"}`}>{editBody.length}/{editCap}</span>
@@ -294,6 +305,7 @@ export default function SequenceEditor() {
                       <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={8} className={`w-full border rounded px-2 py-1 font-mono ${editOver ? "border-rose-400" : ""}`} />
                       <div className="text-slate-400 mt-1">Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{sender_name}}"}</code></div>
                     </label>
+                    )}
                     <div className="flex gap-2">
                       <button
                         disabled={editInvalid || updateStepMut.isPending}
@@ -334,6 +346,9 @@ export default function SequenceEditor() {
             </label>
             <label className="col-span-4"><span className="block text-slate-600 mb-1">Delay hours</span>
               <input type="number" min={0} max={23} value={delayHours} onChange={e => setDelayHours(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
+            </label>
+            <label className="col-span-4"><span className="block text-slate-600 mb-1">Delay mins</span>
+              <input type="number" min={0} max={59} value={delayMinutes} onChange={e => setDelayMinutes(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
             </label>
             {channel === "email" && (
               <label className="col-span-12"><span className="block text-slate-600 mb-1">Subject (max 250)</span>
