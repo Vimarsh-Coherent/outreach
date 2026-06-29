@@ -236,7 +236,9 @@ async def update_lead(session: AsyncSession, user_id: int, lead_id: int, dto) ->
             setattr(lead, field, val)
         elif getattr(dto, field) is None and field not in ("email",):
             setattr(lead, field, None)
-    lead.identity_hash = canonical_identity(lead.email, lead.phone, lead.linkedin_url)
+    lead.identity_hash = canonical_identity(
+        email=lead.email, phone=lead.phone, linkedin=lead.linkedin_url
+    ).hash
     await session.commit()
     await session.refresh(lead)
     return lead
