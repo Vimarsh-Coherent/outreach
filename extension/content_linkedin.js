@@ -13,7 +13,7 @@
   // Content-script build marker — printed on every injection. Confirms which
   // content-script version is live from the LinkedIn tab's DevTools (the SW
   // build marker only proves the worker; this proves the page code).
-  const COHERENT_CS_BUILD = '2026-06-25-dm-messaging-v41';
+  const COHERENT_CS_BUILD = '2026-06-28-connect-premium-fallback-v43';
   LOG('content_linkedin.js loaded — build', COHERENT_CS_BUILD);
 
   // 45s: the DM flow alone can spend ~8s waiting for Send to enable plus the
@@ -1212,39 +1212,85 @@
     }
     await sleep(300);
 
-    const withNote = !!cmd.body_text;
+    // ── Premium-upsell guard ─────────────────────────────────────────────────
+    // LinkedIn can show the "You're out of free custom notes" modal at TWO
+    // points: (a) immediately after clicking Connect, or (b) after clicking
+    // "Add a note". Check right here (before entering any note flow) so we
+    // catch case (a) without waiting for a non-existent "Add a note" button.
+    async function dismissPremiumPopupIfPresent() {
+      const allDialogs = deepQuerySelectorAll('[role="dialog"], [aria-modal="true"], .artdeco-modal');
+      const popup = allDialogs.find(el =>
+        /out of free custom notes|personalized invites with premium/i.test(el.innerText || '')
+      );
+      if (!popup) return false;
+      LOG('Premium upsell detected — dismissing, will send without note');
+      const closeBtn =
+        popup.querySelector('button[aria-label="Dismiss"]') ||
+        popup.querySelector('button[aria-label="Close"]') ||
+        popup.querySelector('button.artdeco-modal__dismiss') ||
+        popup.querySelector('button.artdeco-button--circle') ||
+        [...popup.querySelectorAll('button')].find(b => {
+          const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+          const txt = (b.innerText || b.textContent || '').trim();
+          return /dismiss|close/i.test(lbl) || txt === '×' || txt === '✕' || txt === 'X' || (txt === '' && b.querySelector('svg,li-icon'));
+        });
+      if (closeBtn) { closeBtn.click(); }
+      else { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); }
+      await sleep(700);
+      // Re-click Connect if closing the popup also dismissed the connect dialog
+      if (!findConnectSendButton(false)) {
+        LOG('Connect dialog also closed — re-clicking Connect for no-note send');
+        const reconnect = findConnectControl() || await findResilient('connectButton', /^connect$/i).catch(() => null);
+        if (reconnect) { reconnect.click(); await sleep(800); }
+      }
+      return true; // premium popup was present
+    }
+
+    let withNote = !!cmd.body_text;
+    // Case (a): premium popup appeared immediately after clicking Connect
+    if (withNote && await dismissPremiumPopupIfPresent()) {
+      withNote = false;
+    }
+
     if (withNote) {
       // ── with-note flow ──────────────────────────────────────────────────
       const addNoteBtn = await waitFor(
         () => deepQuerySelector('button[aria-label="Add a note"]')
            || findResilient('addNoteButton', /^add a note$/i),
         8000,
-      );
+      ).catch(() => null);
       if (!addNoteBtn) throw new Error('addNoteButton_not_found_even_after_heal');
       addNoteBtn.click();
-      await sleep(400);
+      await sleep(600);
 
-      let note = await waitFor(
-        () => deepQuerySelector(
-          '[data-test-modal] textarea, .send-invite-modal textarea, [role="dialog"] textarea, '
-          + 'textarea#custom-message, textarea[name="message"]',
-        ),
-        5000,
-      ).catch(() => null);
-      if (!note) note = await findResilient('noteTextarea');
-      if (!note) throw new Error('noteTextarea_not_found_even_after_heal');
-      note.focus();
-      // The note textarea is a controlled component — a direct `note.value = …`
-      // assignment is swallowed by the framework's value tracker, leaving Send
-      // disabled. Use the native prototype setter (same trick as the DM path)
-      // so the tracked value updates and the input event actually registers.
-      const valueSetter = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype, 'value',
-      ).set;
-      valueSetter.call(note, cmd.body_text.slice(0, 300));
-      note.dispatchEvent(new Event('input',  { bubbles: true, composed: true }));
-      note.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-      await sleep(250);
+      // Case (b): premium popup appeared after clicking "Add a note"
+      if (await dismissPremiumPopupIfPresent()) {
+        withNote = false;
+      }
+
+      if (withNote) {
+        let note = await waitFor(
+          () => deepQuerySelector(
+            '[data-test-modal] textarea, .send-invite-modal textarea, [role="dialog"] textarea, '
+            + 'textarea#custom-message, textarea[name="message"]',
+          ),
+          5000,
+        ).catch(() => null);
+        if (!note) note = await findResilient('noteTextarea');
+        if (!note) throw new Error('noteTextarea_not_found_even_after_heal');
+        note.focus();
+        // The note textarea is a controlled component — a direct `note.value = …`
+        // assignment is swallowed by the framework's value tracker, leaving Send
+        // disabled. Use the native prototype setter (same trick as the DM path)
+        // so the tracked value updates and the input event actually registers.
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype, 'value',
+        ).set;
+        valueSetter.call(note, cmd.body_text.slice(0, 300));
+        note.dispatchEvent(new Event('input',  { bubbles: true, composed: true }));
+        note.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        await sleep(250);
+      }
     }
 
     // Wait for the correct send button to be ENABLED, not merely present.

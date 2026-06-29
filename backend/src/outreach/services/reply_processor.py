@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from outreach.services.time_util import utcnow
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -125,14 +126,14 @@ async def process(session: AsyncSession, parsed: ParsedInbound) -> dict:
     if parsed.kind == "reply":
         if enrolment.status == "active":
             enrolment.status = "stopped_reply"
-            enrolment.stopped_at = datetime.now(timezone.utc)
+            enrolment.stopped_at = utcnow()
             enrolment.stopped_reason = "lead replied"
             enrolment.next_send_at = None
             action = "stopped_reply"
     elif parsed.kind == "bounce":
         if enrolment.status == "active":
             enrolment.status = "stopped_bounce"
-            enrolment.stopped_at = datetime.now(timezone.utc)
+            enrolment.stopped_at = utcnow()
             enrolment.stopped_reason = parsed.bounce_detail or "hard bounce"
             enrolment.next_send_at = None
             action = "stopped_bounce"

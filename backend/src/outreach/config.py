@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     sequence_gen_timeout_seconds: int = 40
     # When true, LinkedIn connect/DM bodies are personalized even if a step's
     # config doesn't set ai_personalize — lets manual sequences benefit too.
-    ai_personalize_linkedin_default: bool = True
+    ai_personalize_linkedin_default: bool = False
 
     vault_storage_dir: str = "../data/vectorvault"
     vault_local: bool = True

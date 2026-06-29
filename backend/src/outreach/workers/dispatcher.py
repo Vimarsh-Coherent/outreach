@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from outreach.services.time_util import utcnow
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,7 +97,7 @@ async def claim_due(session: AsyncSession, limit: int = 500) -> list[dict]:
         return []
 
     claims: list[dict] = []
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     for enrol_id, sequence_id, _user_id, _lead_id, current_step_order in claimed_rows:
         # Identify the next step to send.
         step = await session.scalar(
@@ -173,12 +174,12 @@ async def _advance_enrolment(
     )
     if next_step is None:
         e.status = "done"
-        e.stopped_at = datetime.now(timezone.utc)
+        e.stopped_at = utcnow()
         e.stopped_reason = "completed"
         e.next_send_at = None
     else:
         slot = next_valid_slot(
-            base=datetime.now(timezone.utc),
+            base=utcnow(),
             delay_days=next_step.delay_days,
             delay_hours=next_step.delay_hours,
             delay_minutes=next_step.delay_minutes,
@@ -228,7 +229,7 @@ async def _mark_run_failed(
         e.runtime_state = state
         if count_failure and state["consecutive_failures"] >= 5:
             e.status = "errored"
-            e.stopped_at = datetime.now(timezone.utc)
+            e.stopped_at = utcnow()
             e.stopped_reason = f"5 consecutive failures: {error[:200]}"
             e.next_send_at = None
         else:
@@ -238,7 +239,7 @@ async def _mark_run_failed(
                 # Snap the retry into the send window — flat offsets retried
                 # through the night (3 AM sends look robotic).
                 e.next_send_at = next_valid_slot(
-                    base=datetime.now(timezone.utc) + timedelta(minutes=reschedule_minutes),
+                    base=utcnow() + timedelta(minutes=reschedule_minutes),
                     delay_days=0, delay_hours=0,
                     tz_name=seq.timezone,
                     window_start=seq.send_window_start,
@@ -319,7 +320,7 @@ async def process_one(claim: dict) -> dict:
         # a real automated channel (handled below), no longer a manual no-op.
         if step.channel in ("call", "sms"):
             run.status = "sent"
-            run.sent_at = datetime.now(timezone.utc)
+            run.sent_at = utcnow()
             run.provider_message_id = f"manual-{step.channel}-{run.id}"
             session.add(Event(
                 enrolment_id=run.enrolment_id,
@@ -417,7 +418,7 @@ async def process_one(claim: dict) -> dict:
                 seq_for_window = await session.scalar(
                     select(Sequence).where(Sequence.id == enrolment.sequence_id)
                 )
-                cap_base = datetime.now(timezone.utc) + timedelta(hours=3)
+                cap_base = utcnow() + timedelta(hours=3)
                 enrolment.next_send_at = (
                     next_valid_slot(
                         base=cap_base, delay_days=0, delay_hours=0,
@@ -438,7 +439,7 @@ async def process_one(claim: dict) -> dict:
             # safety net in case that wake is ever missed.
             hb_stale = (
                 li_channel.ext_last_heartbeat_at is None
-                or (datetime.now(timezone.utc) - li_channel.ext_last_heartbeat_at)
+                or (utcnow() - li_channel.ext_last_heartbeat_at)
                     > timedelta(hours=1)
             )
             if hb_stale:
@@ -447,7 +448,7 @@ async def process_one(claim: dict) -> dict:
                 enrolment.runtime_state = {
                     **(enrolment.runtime_state or {}), "deferred_offline": True,
                 }
-                enrolment.next_send_at = datetime.now(timezone.utc) + timedelta(
+                enrolment.next_send_at = utcnow() + timedelta(
                     minutes=get_settings().li_offline_backstop_minutes
                 )
                 await session.commit()
@@ -527,7 +528,7 @@ async def process_one(claim: dict) -> dict:
                 from datetime import timedelta
                 run.status = "failed"
                 run.error_message = "whatsapp daily cap reached"
-                enrolment.next_send_at = datetime.now(timezone.utc) + timedelta(hours=1)
+                enrolment.next_send_at = utcnow() + timedelta(hours=1)
                 await session.commit()
                 return {"step_run_id": step_run_id, "result": "cap_hit"}
 
@@ -545,7 +546,7 @@ async def process_one(claim: dict) -> dict:
                     return {"step_run_id": step_run_id, "result": "missing_run_finalise"}
                 if result.ok:
                     run.status = "sent"
-                    run.sent_at = datetime.now(timezone.utc)
+                    run.sent_at = utcnow()
                     run.provider_message_id = result.provider_message_id or f"wa-{run.id}"
                     session_wa.add(Event(
                         enrolment_id=run.enrolment_id, step_run_id=run.id,
@@ -601,7 +602,7 @@ async def process_one(claim: dict) -> dict:
             run.status = "failed"
             run.error_message = "channel daily cap reached"
             from datetime import timedelta
-            enrolment.next_send_at = datetime.now(timezone.utc) + timedelta(hours=1)
+            enrolment.next_send_at = utcnow() + timedelta(hours=1)
             await session.commit()
             return {"step_run_id": step_run_id, "result": "cap_hit"}
         await session.commit()  # release the row locks before SMTP
@@ -657,7 +658,7 @@ async def process_one(claim: dict) -> dict:
             return {"step_run_id": step_run_id, "result": "missing_run_finalise"}
         if result.ok:
             run.status = "sent"
-            run.sent_at = datetime.now(timezone.utc)
+            run.sent_at = utcnow()
             run.provider_message_id = message_id
             session3.add(Event(
                 enrolment_id=run.enrolment_id, step_run_id=run.id,

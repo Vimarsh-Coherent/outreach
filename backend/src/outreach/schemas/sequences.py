@@ -88,9 +88,9 @@ class SequenceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=4000)
     timezone: str = Field(default="Asia/Kolkata", max_length=64)
-    send_window_start: time = time(9, 0)
-    send_window_end: time = time(18, 0)
-    send_days_mask: int = Field(default=31, ge=1, le=127)
+    send_window_start: time = time(0, 0)
+    send_window_end: time = time(23, 59)
+    send_days_mask: int = Field(default=127, ge=1, le=127)
     ai_followups_enabled: bool = False
 
 

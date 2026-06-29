@@ -28,9 +28,9 @@ class Sequence(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
 
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata", nullable=False)
-    send_window_start: Mapped[time] = mapped_column(Time, default=time(9, 0), nullable=False)
-    send_window_end: Mapped[time] = mapped_column(Time, default=time(18, 0), nullable=False)
-    send_days_mask: Mapped[int] = mapped_column(SmallInteger, default=31, nullable=False)
+    send_window_start: Mapped[time] = mapped_column(Time, default=time(0, 0), nullable=False)
+    send_window_end: Mapped[time] = mapped_column(Time, default=time(23, 59), nullable=False)
+    send_days_mask: Mapped[int] = mapped_column(SmallInteger, default=127, nullable=False)
 
     ai_followups_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_knowledge_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
