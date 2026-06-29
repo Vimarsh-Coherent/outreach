@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 
 import { generateSequenceFromPrompt } from "../api/sequences";
+import PageHero from "../components/PageHero";
 import {
   SequenceRagDocumentOut,
   deleteRagDocument,
@@ -118,10 +119,11 @@ export default function SequenceGenerate() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <Link to="/sequences" className="text-sm text-sky-700 hover:underline">&larr; Back to sequences</Link>
-        <h2 className="page-title mt-2">Generate sequence with AI</h2>
-        <p className="text-sm text-slate-500 mt-1">
-          Upload pitch documents (optional), describe the sequence you want, and AI will draft a cadence using your docs as context.
-        </p>
+        <PageHero
+          eyebrow="AI"
+          title="Generate sequence with AI"
+          subtitle="Upload pitch documents (optional), describe the sequence you want, and AI will draft a cadence using your docs as context."
+        />
       </div>
 
       {error && (

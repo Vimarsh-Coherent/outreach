@@ -21,6 +21,7 @@ import {
   requestWaPairingCode,
   testEmailChannel,
 } from "../api/channels";
+import PageHero from "../components/PageHero";
 
 const blankSmtp: SMTPConfig = {
   host: "",
@@ -414,12 +415,11 @@ export default function Channels() {
 
   return (
     <div className="space-y-8 max-w-5xl">
-      <div>
-        <h2 className="page-title">Channels</h2>
-        <p className="text-sm text-slate-500 mt-1">
-          Connect any SMTP mailbox (Gmail, Outlook, Yahoo, Zoho, Microsoft 365, SendGrid/SES/Mailgun, or a custom server). IMAP is used to detect replies and bounces. Credentials are encrypted at rest (Fernet).
-        </p>
-      </div>
+      <PageHero
+        eyebrow="Connections"
+        title="Channels"
+        subtitle="Connect any SMTP mailbox (Gmail, Outlook, Yahoo, Zoho, Microsoft 365, SendGrid/SES/Mailgun, or a custom server). IMAP is used to detect replies and bounces. Credentials are encrypted at rest (Fernet)."
+      />
 
       <section className="card">
         <div className="card-head">

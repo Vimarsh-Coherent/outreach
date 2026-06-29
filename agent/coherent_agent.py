@@ -53,6 +53,9 @@ def load_config() -> dict:
         "whatsapp_api_key": "",   # shared secret; must match backend WA_API_KEY (empty = local only)
         "node_path": "",          # auto-detected if empty
         "linkedin_url": "https://www.linkedin.com/feed/",
+        # Auto-open LinkedIn when online. Set false to stop the agent opening
+        # LinkedIn tabs (it still manages the backend + WhatsApp sidecar).
+        "open_linkedin": True,
         # dedicated_profile=True  → launch an isolated Chrome profile w/ the
         #   unpacked extension auto-loaded (relaunched if it dies).
         # dedicated_profile=False → open LinkedIn in the user's EXISTING default
@@ -291,14 +294,16 @@ def main() -> int:
                     ensure_backend(cfg)
                 if cfg.get("start_whatsapp_sidecar") and node:
                     ensure_whatsapp_sidecar(cfg, node)
-                if dedicated:
-                    # Keep the isolated Chrome alive (relaunch if it died).
-                    ensure_chrome(cfg, chrome)
-                elif not was_online:
-                    # Existing-Chrome mode: open LinkedIn once per reconnect.
-                    open_linkedin_existing(cfg, chrome)
+                # LinkedIn auto-open (set "open_linkedin": false to disable).
+                if cfg.get("open_linkedin", True):
+                    if dedicated:
+                        # Keep the isolated Chrome alive (relaunch if it died).
+                        ensure_chrome(cfg, chrome)
+                    elif not was_online:
+                        # Existing-Chrome mode: open LinkedIn once per reconnect.
+                        open_linkedin_existing(cfg, chrome)
             elif was_online:
-                log.info("internet lost — will reopen LinkedIn on reconnect")
+                log.info("internet lost")
             was_online = online
         except Exception as e:  # noqa: BLE001
             log.exception("agent loop error: %s", e)

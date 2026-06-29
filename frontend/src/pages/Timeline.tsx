@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import FollowUpDrafter from "../components/FollowUpDrafter";
+import PageHero, { heroBtnPrimary } from "../components/PageHero";
 
 interface TimelineItem {
   kind: string;
@@ -71,24 +72,23 @@ export default function Timeline() {
   const l = data.lead;
   return (
     <div className="space-y-6 max-w-4xl">
-      <div className="text-sm"><Link to="/dashboard" className="btn-ghost btn-sm">← Dashboard</Link></div>
-      <div className="card card-pad flex items-center justify-between">
-        <div>
-          <h2 className="page-title">{[l.first_name, l.last_name].filter(Boolean).join(" ") || l.email || "(unknown lead)"}</h2>
-          <div className="text-sm text-slate-500 mt-1">
-            {l.title ? <span className="mr-2">{l.title}</span> : null}
-            {l.company ? <span className="mr-2">@ {l.company}</span> : null}
-            {l.email ? <a href={`mailto:${l.email}`} className="text-sky-600 hover:underline">{l.email}</a> : null}
-          </div>
-        </div>
-        <button
-          onClick={() => setDrafting(true)}
-          disabled={!l.email}
-          className="btn-primary"
-        >
-          Draft AI follow-up
-        </button>
-      </div>
+      <div className="text-sm"><Link to="/dashboard" className="text-brand-600 hover:underline">← Dashboard</Link></div>
+      <PageHero
+        eyebrow="Lead timeline"
+        title={[l.first_name, l.last_name].filter(Boolean).join(" ") || l.email || "(unknown lead)"}
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-2 text-white/75">
+            {l.title ? <span>{l.title}</span> : null}
+            {l.company ? <span>@ {l.company}</span> : null}
+            {l.email ? <a href={`mailto:${l.email}`} className="text-white/90 underline hover:text-white">{l.email}</a> : null}
+          </span>
+        }
+        actions={
+          <button onClick={() => setDrafting(true)} disabled={!l.email} className={`${heroBtnPrimary} disabled:opacity-50`}>
+            Draft AI follow-up
+          </button>
+        }
+      />
 
       <div className="card card-pad">
         <h3 className="font-semibold mb-2">Enrolments</h3>

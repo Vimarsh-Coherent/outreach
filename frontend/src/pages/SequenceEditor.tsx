@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 
 import AbTestPanel from "../components/AbTestPanel";
 import BranchEditor from "../components/BranchEditor";
+import PageHero, { heroBtnPrimary } from "../components/PageHero";
 import SequenceFlowCanvas from "../components/SequenceFlowCanvas";
 import SpamCheckButton from "../components/SpamCheckButton";
 import { reorderStepsWithTransitionDelays, sortSteps } from "../lib/sequenceSteps";
@@ -216,24 +217,29 @@ export default function SequenceEditor() {
       <div className="text-sm">
         <Link to="/sequences" className="text-brand-600 hover:underline">← back to sequences</Link>
       </div>
-      <div className="flex items-end justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="page-title">{seq.name}</h2>
-          <div className="text-sm text-slate-500 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="badge-slate capitalize">{seq.status}</span>
-            <span className="font-mono text-slate-600">{seq.timezone}</span>
-            <span className="text-slate-300">·</span>
-            <span>{seq.send_window_start.slice(0,5)}–{seq.send_window_end.slice(0,5)}</span>
-            <span className="text-slate-300">·</span>
-            <span>{DAYS_MASK_LABEL(seq.send_days_mask)}</span>
-            {seq.ai_followups_enabled && <span className="badge-brand">AI follow-ups</span>}
-          </div>
-          {seq.description && <p className="text-sm text-slate-600 mt-2 max-w-2xl">{seq.description}</p>}
-        </div>
-        <button onClick={() => setEnrolOpen(o => !o)} disabled={seq.steps.length === 0} className="btn-primary shrink-0">
-          {enrolOpen ? "Close" : "Enrol leads"}
-        </button>
-      </div>
+      <PageHero
+        eyebrow="Sequence"
+        title={seq.name}
+        subtitle={
+          <span className="flex flex-col gap-1.5">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-white/75">
+              <span className="rounded-full bg-white/15 px-2 py-0.5 text-xs font-medium capitalize text-white">{seq.status}</span>
+              <span className="font-mono text-white/80">{seq.timezone}</span>
+              <span className="text-white/40">·</span>
+              <span>{seq.send_window_start.slice(0,5)}–{seq.send_window_end.slice(0,5)}</span>
+              <span className="text-white/40">·</span>
+              <span>{DAYS_MASK_LABEL(seq.send_days_mask)}</span>
+              {seq.ai_followups_enabled && <span className="rounded-full bg-white/15 px-2 py-0.5 text-xs text-white">AI follow-ups</span>}
+            </span>
+            {seq.description && <span className="text-white/60">{seq.description}</span>}
+          </span>
+        }
+        actions={
+          <button onClick={() => setEnrolOpen(o => !o)} disabled={seq.steps.length === 0} className={`${heroBtnPrimary} disabled:opacity-50`}>
+            {enrolOpen ? "Close" : "Enrol leads"}
+          </button>
+        }
+      />
 
       <section className="card card-pad">
         <div className="flex flex-wrap items-center justify-between gap-3">

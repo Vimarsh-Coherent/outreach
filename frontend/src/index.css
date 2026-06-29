@@ -41,4 +41,51 @@
 
   .th          { @apply text-left text-xs font-semibold uppercase tracking-wide text-slate-400 py-2.5 px-3; }
   .td          { @apply py-3 px-3 text-sm text-slate-700; }
+
+  /* ── Bold / vibrant marketing + hero primitives ─────────────────────────── */
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, #4f46e5 0%, #7c3aed 45%, #d946ef 100%);
+  }
+  .btn-gradient {
+    @apply btn text-white shadow-lg shadow-brand-600/25 hover:shadow-xl hover:shadow-brand-600/30 transition-all;
+    background-image: linear-gradient(100deg, #4f46e5 0%, #7c3aed 50%, #a21caf 100%);
+  }
+  .btn-gradient:hover { filter: brightness(1.06); }
+  .btn-lg { @apply px-6 py-3 text-base rounded-xl; }
+
+  /* Glassmorphism card — frosted, for use over gradient backgrounds. */
+  .glass {
+    @apply rounded-2xl border border-white/20 bg-white/10 backdrop-blur-xl;
+    box-shadow: 0 8px 40px -12px rgba(79, 70, 229, 0.35);
+  }
+  .glass-light {
+    @apply rounded-2xl border border-slate-200/70 bg-white/70 backdrop-blur-xl shadow-card;
+  }
+
+  /* Hero background: deep indigo→violet with soft mesh glow. */
+  .hero-bg {
+    background-color: #0b0a1f;
+    background-image:
+      radial-gradient(60% 60% at 15% 10%, rgba(99, 102, 241, 0.45) 0%, transparent 60%),
+      radial-gradient(55% 55% at 85% 20%, rgba(217, 70, 239, 0.35) 0%, transparent 55%),
+      radial-gradient(70% 70% at 50% 100%, rgba(124, 58, 237, 0.40) 0%, transparent 60%);
+  }
+  .feature-icon {
+    @apply flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-lg;
+    background-image: linear-gradient(135deg, #6366f1, #a21caf);
+  }
+}
+
+@layer utilities {
+  .blob { filter: blur(64px); animation: floaty 14s ease-in-out infinite; }
+  @keyframes floaty {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50%      { transform: translate(20px, -28px) scale(1.08); }
+  }
+  .animate-rise { animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
 }

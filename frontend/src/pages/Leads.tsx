@@ -15,6 +15,7 @@ import {
   previewUpload,
 } from "../api/leads";
 import { DraftResponse, SendResponse, draftFollowup, sendFollowup, sendLinkedInDm } from "../api/followups";
+import PageHero from "../components/PageHero";
 
 const LEAD_FIELDS: { key: LeadField; label: string; required?: boolean }[] = [
   { key: "email", label: "Email" },
@@ -474,12 +475,11 @@ export default function Leads() {
     <div className="space-y-8 max-w-6xl">
       {replyLead && <ReplyModal lead={replyLead} channel={replyChannel} onClose={() => setReplyLead(null)} />}
 
-      <div>
-        <h2 className="page-title">Leads</h2>
-        <p className="text-sm text-slate-500 mt-1">
-          Upload CSV / TSV / Excel. Columns are auto-mapped; you can override them before committing. Dedupe is by canonical identity (email → phone → LinkedIn slug).
-        </p>
-      </div>
+      <PageHero
+        eyebrow="Contacts"
+        title="Leads"
+        subtitle="Upload CSV / TSV / Excel. Columns are auto-mapped; you can override them before committing. Dedupe is by canonical identity (email → phone → LinkedIn slug)."
+      />
 
       <section className="card card-pad space-y-3">
         <div className="flex items-center justify-between">

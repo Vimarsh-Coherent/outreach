@@ -1,6 +1,7 @@
-import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import Analytics from "./pages/Analytics";
+import Landing from "./pages/Landing";
 import Channels from "./pages/Channels";
 import Dashboard from "./pages/Dashboard";
 import Enrolments from "./pages/Enrolments";
@@ -114,29 +115,40 @@ function Topbar() {
   );
 }
 
-export default function App() {
+function Shell() {
   return (
     <div className="flex bg-slate-50 min-h-screen">
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col">
         <Topbar />
         <main className="flex-1 p-8">
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/leads" element={<Leads />} />
-            <Route path="/leads/:id/timeline" element={<Timeline />} />
-            <Route path="/sequences" element={<Sequences />} />
-            <Route path="/sequences/generate" element={<SequenceGenerate />} />
-            <Route path="/sequences/:id" element={<SequenceEditor />} />
-            <Route path="/enrolments" element={<Enrolments />} />
-            <Route path="/channels" element={<Channels />} />
-            <Route path="/integrations" element={<Integrations />} />
-            <Route path="/analytics" element={<Analytics />} />
-            <Route path="/watchdog" element={<Watchdog />} />
-          </Routes>
+          <Outlet />
         </main>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      {/* Public marketing landing page (no app shell). */}
+      <Route path="/" element={<Landing />} />
+      {/* App — wrapped in the sidebar/topbar shell. */}
+      <Route element={<Shell />}>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/leads" element={<Leads />} />
+        <Route path="/leads/:id/timeline" element={<Timeline />} />
+        <Route path="/sequences" element={<Sequences />} />
+        <Route path="/sequences/generate" element={<SequenceGenerate />} />
+        <Route path="/sequences/:id" element={<SequenceEditor />} />
+        <Route path="/enrolments" element={<Enrolments />} />
+        <Route path="/channels" element={<Channels />} />
+        <Route path="/integrations" element={<Integrations />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/watchdog" element={<Watchdog />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }

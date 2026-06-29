@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import PageHero, { heroBtnPrimary } from "../components/PageHero";
 import {
   WatchdogEvent,
   WatchdogTier,
@@ -57,23 +58,21 @@ export default function Watchdog() {
 
   return (
     <div className="space-y-6 max-w-7xl">
-      <div className="flex items-end justify-between">
-        <div>
-          <h2 className="page-title">Watchdog</h2>
-          <p className="text-sm text-slate-500 mt-1">
-            5-tier patrol daemon that monitors the platform's health and auto-heals known failure modes (stuck LinkedIn commands, missing sentiment classifications, expired cap windows).
-            Inspired by watchlink-main's selector-healing watchdog.
-          </p>
-        </div>
-        {breakerOpen && (
-          <button
-            onClick={() => resetMut.mutate()}
-            className="btn-primary btn-sm bg-rose-600 hover:bg-rose-700"
-          >
-            Circuit breaker OPEN — click to reset
-          </button>
-        )}
-      </div>
+      <PageHero
+        eyebrow="Reliability"
+        title="Watchdog"
+        subtitle="5-tier patrol daemon that monitors the platform's health and auto-heals known failure modes (stuck LinkedIn commands, missing sentiment classifications, expired cap windows). Inspired by watchlink-main's selector-healing watchdog."
+        actions={
+          breakerOpen ? (
+            <button
+              onClick={() => resetMut.mutate()}
+              className={heroBtnPrimary}
+            >
+              Circuit breaker OPEN — click to reset
+            </button>
+          ) : undefined
+        }
+      />
 
       <section className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="card card-pad">

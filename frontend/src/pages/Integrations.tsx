@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import HubspotCard from "../components/HubspotCard";
+import PageHero from "../components/PageHero";
 import {
   createApiKey,
   createWebhook,
@@ -48,12 +49,8 @@ export default function Integrations() {
 
   return (
     <div className="space-y-8 max-w-5xl">
-      <div>
-        <h2 className="page-title">Integrations</h2>
-        <p className="text-sm text-slate-500 mt-1">
-          Connect a CRM directly (HubSpot), sync events to any CRM via webhooks (Zapier / Make / n8n), or use the public API.
-        </p>
-      </div>
+      <PageHero eyebrow="Connect" title="Integrations"
+        subtitle="Connect a CRM directly (HubSpot), sync events to any CRM via webhooks (Zapier / Make / n8n), or use the public API." />
 
       {oauthResult === "connected" && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">HubSpot connected ✓</div>

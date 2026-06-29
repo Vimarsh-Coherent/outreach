@@ -10,6 +10,7 @@ import {
   listSequences,
   testNow,
 } from "../api/sequences";
+import PageHero, { heroBtnPrimary, heroBtnGhost } from "../components/PageHero";
 
 const STATUS_CHIP: Record<string, string> = {
   draft: "badge-slate",
@@ -66,26 +67,27 @@ export default function Sequences() {
 
   return (
     <div className="space-y-6 max-w-6xl">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="page-title">Sequences</h2>
-          <p className="text-sm text-slate-500 mt-1">Multi-step outreach cadences. Each sequence runs in its own timezone + business hours.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            to="/sequences/generate"
-            className="btn text-white bg-gradient-to-r from-violet-600 to-brand-600 hover:from-violet-700 hover:to-brand-700 shadow-sm"
-          >
-            ✨ AI Sequence
-          </Link>
-          <button
-            onClick={() => setShowNew(s => !s)}
-            className="btn-ghost"
-          >
-            {showNew ? "Cancel" : "+ New sequence"}
-          </button>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Campaigns"
+        title="Sequences"
+        subtitle="Multi-step outreach cadences. Each sequence runs in its own timezone + business hours."
+        actions={
+          <>
+            <Link
+              to="/sequences/generate"
+              className={heroBtnPrimary}
+            >
+              ✨ AI Sequence
+            </Link>
+            <button
+              onClick={() => setShowNew(s => !s)}
+              className={heroBtnGhost}
+            >
+              {showNew ? "Cancel" : "+ New sequence"}
+            </button>
+          </>
+        }
+      />
 
       {toast && (
         <div className="rounded-lg border border-brand-200 bg-brand-50 text-brand-800 text-sm px-4 py-2.5 flex items-center gap-2">

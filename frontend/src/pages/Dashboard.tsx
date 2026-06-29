@@ -78,12 +78,24 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 max-w-7xl">
-      <div className="flex items-end justify-between">
-        <div>
-          <h2 className="page-title">Dashboard</h2>
-          <p className="text-sm text-slate-500 mt-1">Pipeline health across email + LinkedIn outreach.</p>
+      <div className="relative overflow-hidden rounded-2xl hero-bg p-7 sm:p-8">
+        <div className="blob absolute -right-16 -top-12 h-52 w-52 rounded-full bg-fuchsia-500/30" />
+        <div className="blob absolute left-1/3 -bottom-16 h-44 w-44 rounded-full bg-brand-500/30" />
+        <div className="relative flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-white/60">Welcome back</p>
+            <h2 className="mt-1 text-3xl font-bold tracking-tight text-white">Your outreach at a glance</h2>
+            <p className="mt-1.5 text-sm text-white/70">Pipeline health across email, LinkedIn &amp; WhatsApp.</p>
+            <div className="mt-5 flex flex-wrap gap-2.5">
+              <Link to="/sequences/generate" className="btn btn-sm rounded-lg bg-white font-semibold text-slate-900 hover:bg-white/90">✨ New AI sequence</Link>
+              <Link to="/leads" className="btn btn-sm rounded-lg border border-white/20 bg-white/10 text-white backdrop-blur hover:bg-white/20">Upload leads</Link>
+              <Link to="/integrations" className="btn btn-sm rounded-lg border border-white/20 bg-white/10 text-white backdrop-blur hover:bg-white/20">Integrations</Link>
+            </div>
+          </div>
+          <div className="rounded-lg bg-white/10 backdrop-blur px-1 py-1 ring-1 ring-white/15">
+            <DateRangeSelect value={days} onChange={setDays} />
+          </div>
         </div>
-        <DateRangeSelect value={days} onChange={setDays} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">

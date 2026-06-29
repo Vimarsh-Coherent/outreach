@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import { type AnalyticsMessage, fetchMessages, type AnalyticsStats } from "../api/analytics";
 import { DateRangeSelect } from "../components/DateRangeSelect";
+import PageHero from "../components/PageHero";
 
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 function timeAgo(iso: string | null): string {
@@ -364,28 +365,29 @@ export default function Analytics() {
       {showViz && data && <VizModal stats={data.stats} onClose={() => setShowViz(false)} />}
 
       {/* header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-800">Data Analytics</h1>
-          <p className="text-sm text-slate-500 mt-0.5">All messages sent and received across every channel</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <DateRangeSelect value={days} onChange={setDays} />
-          <button
-            onClick={() => setShowViz(true)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm font-medium hover:bg-indigo-100 transition-colors shadow-sm"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-              <path d="M11 11V3a1 1 0 0 1 1-1h0a9 9 0 0 1 9 9v0a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1z" />
-              <path d="M11 13v8a9 9 0 0 1-9-9h8a1 1 0 0 1 1 1z" />
-            </svg>
-            Visualization
-          </button>
-          <div className="flex items-center gap-2 text-sm text-slate-500 bg-white rounded-lg border border-slate-200 px-3 py-1.5 shadow-sm">
-            <span className="font-semibold text-slate-700">{totalSent + totalReceived}</span> total messages
-          </div>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Insights"
+        title="Data Analytics"
+        subtitle="All messages sent and received across every channel"
+        actions={
+          <>
+            <DateRangeSelect value={days} onChange={setDays} />
+            <button
+              onClick={() => setShowViz(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm font-medium hover:bg-indigo-100 transition-colors shadow-sm"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <path d="M11 11V3a1 1 0 0 1 1-1h0a9 9 0 0 1 9 9v0a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1z" />
+                <path d="M11 13v8a9 9 0 0 1-9-9h8a1 1 0 0 1 1 1z" />
+              </svg>
+              Visualization
+            </button>
+            <div className="flex items-center gap-2 text-sm text-slate-500 bg-white rounded-lg border border-slate-200 px-3 py-1.5 shadow-sm">
+              <span className="font-semibold text-slate-700">{totalSent + totalReceived}</span> total messages
+            </div>
+          </>
+        }
+      />
 
       {/* stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
