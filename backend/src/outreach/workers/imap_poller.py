@@ -38,12 +38,16 @@ def _ssl_ctx() -> ssl.SSLContext:
     return ssl.create_default_context()
 
 
-async def _match_reply_by_sender(from_email: str) -> int | None:
+async def _match_reply_by_sender(from_email: str, received_at: datetime) -> int | None:
     """Fallback for Gmail which rewrites Message-IDs on send.
-    Finds the latest sent email step_run for the lead with this email address."""
+    Finds the latest sent email step_run for the lead with this email address
+    that was sent BEFORE the inbound reply arrived (prevents stale replies from
+    matching new enrolments). A 1-hour tolerance handles sender-clock skew where
+    the Date header appears slightly earlier than our sent_at."""
     from outreach.models.enrolment import Enrolment
     from outreach.models.lead import Lead
     from outreach.models.step_run import StepRun
+    from datetime import timedelta
 
     async with SessionLocal() as session:
         result = await session.execute(
@@ -53,6 +57,7 @@ async def _match_reply_by_sender(from_email: str) -> int | None:
             .where(Lead.email == from_email.lower())
             .where(StepRun.channel == "email")
             .where(StepRun.status == "sent")
+            .where(StepRun.sent_at <= received_at + timedelta(hours=1))
             .order_by(StepRun.id.desc())
             .limit(1)
         )
@@ -152,7 +157,7 @@ async def _poll_channel(channel: Channel, search_days: int = 7) -> dict:
                 and parsed.from_addr
                 and not NOREPLY_FROM_RX.search(parsed.from_addr)
             ):
-                step_run_id = await _match_reply_by_sender(parsed.from_addr)
+                step_run_id = await _match_reply_by_sender(parsed.from_addr, parsed.received_at)
                 if step_run_id is not None:
                     parsed.kind = "reply"
                     parsed.matched_step_run_id = step_run_id

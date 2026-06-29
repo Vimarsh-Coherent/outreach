@@ -41,6 +41,7 @@ def next_valid_slot(
     base: datetime,
     delay_days: int,
     delay_hours: int,
+    delay_minutes: int = 0,
     tz_name: str,
     window_start: time,
     window_end: time,
@@ -61,6 +62,6 @@ def next_valid_slot(
     if base.tzinfo is None:
         base = base.replace(tzinfo=timezone.utc)
     tz = ZoneInfo(tz_name)
-    local = base.astimezone(tz) + timedelta(days=delay_days, hours=delay_hours)
+    local = base.astimezone(tz) + timedelta(days=delay_days, hours=delay_hours, minutes=delay_minutes)
     snapped = _advance_to_window(local, window_start, window_end, days_mask)
     return snapped.astimezone(timezone.utc)

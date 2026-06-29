@@ -63,7 +63,7 @@ def _to_out(s: Sequence, step_count: int, active_enrolments: int) -> SequenceOut
 def _step_to_out(s: SequenceStep) -> StepOut:
     return StepOut(
         id=s.id, sequence_id=s.sequence_id, step_order=s.step_order, channel=s.channel,
-        delay_days=s.delay_days, delay_hours=s.delay_hours,
+        delay_days=s.delay_days, delay_hours=s.delay_hours, delay_minutes=s.delay_minutes,
         subject=s.subject, body=s.body, config=s.config,
         transitions=s.transitions or [],
         created_at=s.created_at, updated_at=s.updated_at,
@@ -314,6 +314,7 @@ async def add_step(
         channel=dto.channel,
         delay_days=dto.delay_days,
         delay_hours=dto.delay_hours,
+        delay_minutes=dto.delay_minutes,
         subject=getattr(dto, "subject", None),
         body=dto.body,
         config=dto.config,
@@ -375,6 +376,7 @@ async def update_step(
     step.channel = dto.channel
     step.delay_days = dto.delay_days
     step.delay_hours = dto.delay_hours
+    step.delay_minutes = dto.delay_minutes
     step.subject = getattr(dto, "subject", None)
     step.body = dto.body
     step.config = dto.config

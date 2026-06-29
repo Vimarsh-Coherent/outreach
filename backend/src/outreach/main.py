@@ -26,6 +26,7 @@ from outreach.api import (
     routes_whatsapp,
 )
 from outreach.config import get_settings
+from outreach.services.time_util import sync_clock
 from outreach.workers import scheduler
 
 
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     # Reload .env on every process start so API key changes take effect
     # without requiring a manual cache clear.
     get_settings.cache_clear()
+    sync_clock()
     scheduler.start()
     try:
         yield

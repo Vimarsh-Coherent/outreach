@@ -13,6 +13,7 @@ export function draftStepsToPreviewSteps(steps: AIStepDraft[]): StepOut[] {
     channel: step.channel,
     delay_days: step.delay_days,
     delay_hours: step.delay_hours,
+    delay_minutes: (step as { delay_minutes?: number }).delay_minutes ?? 0,
     subject: step.subject,
     body: step.body,
     config: step.config,

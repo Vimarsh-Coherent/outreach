@@ -90,6 +90,7 @@ export default function SequenceEditor() {
   // that position instead of appended (add → reorder into place).
   const [insertIndex, setInsertIndex] = useState<number | null>(null);
   const addFormRef = useRef<HTMLDivElement>(null);
+  const [delayMinutes, setDelayMinutes] = useState(0);
 
   const addMut = useMutation({
     mutationFn: async () => {
@@ -98,6 +99,7 @@ export default function SequenceEditor() {
         body: channel === "linkedin_like" ? "(visit + like)" : body,
         delay_days: delayDays,
         delay_hours: delayHours,
+        delay_minutes: delayMinutes,
         subject: channel === "email" ? subject : null,
       };
       return addStep(sequenceId, payload);
@@ -155,6 +157,7 @@ export default function SequenceEditor() {
   const [editBody, setEditBody] = useState("");
   const [editDelayDays, setEditDelayDays] = useState(0);
   const [editDelayHours, setEditDelayHours] = useState(0);
+  const [editDelayMinutes, setEditDelayMinutes] = useState(0);
 
   const startEdit = (s: StepOut) => {
     setEditingId(s.id);
@@ -162,15 +165,17 @@ export default function SequenceEditor() {
     setEditBody(s.body);
     setEditDelayDays(s.delay_days);
     setEditDelayHours(s.delay_hours);
+    setEditDelayMinutes(s.delay_minutes);
   };
 
   const updateStepMut = useMutation({
     mutationFn: async (s: StepOut) => {
       const payload: StepCreate = {
         channel: s.channel,
-        body: editBody,
+        body: s.channel === "linkedin_like" ? "(visit + like)" : editBody,
         delay_days: editDelayDays,
         delay_hours: editDelayHours,
+        delay_minutes: editDelayMinutes,
         subject: s.channel === "email" ? editSubject : null,
       };
       return updateStep(sequenceId, s.id, payload);
@@ -371,6 +376,10 @@ export default function SequenceEditor() {
                   <span className="label">Delay hours</span>
                   <input type="number" min={0} max={23} value={editDelayHours} onChange={e => setEditDelayHours(Number(e.target.value))} className="input" />
                 </label>
+                <label className="col-span-3">
+                  <span className="label">Delay mins</span>
+                  <input type="number" min={0} max={59} value={editDelayMinutes} onChange={e => setEditDelayMinutes(Number(e.target.value))} className="input" />
+                </label>
               </div>
               {s.channel === "email" && (
                 <label className="block">
@@ -432,6 +441,9 @@ export default function SequenceEditor() {
             </label>
             <label className="col-span-4"><span className="label">Delay hours</span>
               <input type="number" min={0} max={23} value={delayHours} onChange={e => setDelayHours(Number(e.target.value))} className="input" />
+            </label>
+            <label className="col-span-4"><span className="block text-slate-600 mb-1">Delay mins</span>
+              <input type="number" min={0} max={59} value={delayMinutes} onChange={e => setDelayMinutes(Number(e.target.value))} className="w-full border rounded px-2 py-1.5" />
             </label>
             {channel === "email" && (
               <label className="col-span-12"><span className="label">Subject (max 250)</span>

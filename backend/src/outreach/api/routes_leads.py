@@ -115,6 +115,19 @@ async def create_lead(
     return LeadOut.model_validate(items[0], from_attributes=True)
 
 
+@router.patch("/{lead_id}", response_model=LeadOut)
+async def update_lead(
+    lead_id: int,
+    dto: LeadCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> LeadOut:
+    lead = await leads_service.update_lead(session, user.id, lead_id, dto)
+    if lead is None:
+        raise HTTPException(404, "lead not found")
+    return lead
+
+
 @router.delete("/{lead_id}", status_code=204)
 async def delete_lead(
     lead_id: int,

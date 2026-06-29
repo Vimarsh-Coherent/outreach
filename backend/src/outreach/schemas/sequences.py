@@ -10,6 +10,7 @@ class _StepBase(BaseModel):
     step_order: int | None = Field(default=None, ge=1, le=50)
     delay_days: int = Field(default=0, ge=0, le=365)
     delay_hours: int = Field(default=0, ge=0, le=23)
+    delay_minutes: int = Field(default=0, ge=0, le=59)
     config: dict = Field(default_factory=dict)
     transitions: list[dict] = Field(default_factory=list)
 
@@ -71,6 +72,7 @@ class StepOut(BaseModel):
     channel: str
     delay_days: int
     delay_hours: int
+    delay_minutes: int
     subject: str | None
     body: str
     config: dict
@@ -92,9 +94,9 @@ class SequenceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=4000)
     timezone: str = Field(default="Asia/Kolkata", max_length=64)
-    send_window_start: time = time(9, 0)
-    send_window_end: time = time(18, 0)
-    send_days_mask: int = Field(default=31, ge=1, le=127)
+    send_window_start: time = time(0, 0)
+    send_window_end: time = time(23, 59)
+    send_days_mask: int = Field(default=127, ge=1, le=127)
     ai_followups_enabled: bool = False
     track_opens: bool = False
     track_clicks: bool = False

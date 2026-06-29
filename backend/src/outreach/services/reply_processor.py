@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from outreach.services.time_util import utcnow
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -84,6 +85,20 @@ async def process(session: AsyncSession, parsed: ParsedInbound) -> dict:
     if enrolment is None:
         return {"kind": parsed.kind, "action": "ignored", "reason": "enrolment not found"}
 
+    # Stale-reply guard: if the inbound email's date predates when we sent the step,
+    # it's an old thread the IMAP scanner pulled up — ignore it. Allow 1-hour
+    # tolerance for sender-side clock skew (Date header set by recipient's client).
+    if (
+        parsed.kind in ("reply", "auto_reply")
+        and run.sent_at is not None
+        and parsed.received_at < run.sent_at - timedelta(hours=1)
+    ):
+        log.info(
+            "skipping stale reply: received_at=%s < step_run %d sent_at=%s",
+            parsed.received_at, run.id, run.sent_at,
+        )
+        return {"kind": parsed.kind, "action": "ignored", "reason": "stale_reply"}
+
     # Insert the event. The partial unique index on (enrolment_id, event_type, external_id)
     # WHERE external_id IS NOT NULL drops duplicates from re-fetched IMAP messages.
     event = Event(
@@ -125,18 +140,18 @@ async def process(session: AsyncSession, parsed: ParsedInbound) -> dict:
                         for t in branching.normalize_transitions(fs.transitions)
                     )
             if has_reply_edge:
-                enrolment.next_send_at = datetime.now(timezone.utc)
+                enrolment.next_send_at = utcnow()
                 action = "branch_on_reply"
             else:
                 enrolment.status = "stopped_reply"
-                enrolment.stopped_at = datetime.now(timezone.utc)
+                enrolment.stopped_at = utcnow()
                 enrolment.stopped_reason = "lead replied"
                 enrolment.next_send_at = None
                 action = "stopped_reply"
     elif parsed.kind == "bounce":
         if enrolment.status == "active":
             enrolment.status = "stopped_bounce"
-            enrolment.stopped_at = datetime.now(timezone.utc)
+            enrolment.stopped_at = utcnow()
             enrolment.stopped_reason = parsed.bounce_detail or "hard bounce"
             enrolment.next_send_at = None
             action = "stopped_bounce"

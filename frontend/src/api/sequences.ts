@@ -23,6 +23,7 @@ export interface StepOut {
   channel: StepChannel;
   delay_days: number;
   delay_hours: number;
+  delay_minutes: number;
   subject: string | null;
   body: string;
   config: Record<string, unknown>;
@@ -71,6 +72,7 @@ export interface StepCreate {
   step_order?: number;
   delay_days?: number;
   delay_hours?: number;
+  delay_minutes?: number;
   subject?: string | null;
   body: string;
   config?: Record<string, unknown>;

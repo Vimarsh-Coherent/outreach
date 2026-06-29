@@ -131,7 +131,7 @@ async def list_leads(
             Lead.title.ilike(like),
         ))
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
-    result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
+    result = await session.execute(base.order_by(Lead.updated_at.desc()).limit(limit).offset(offset))
     return list(result.scalars().all()), int(total)
 
 
@@ -151,7 +151,7 @@ async def list_leads_enriched(
             Lead.title.ilike(like),
         ))
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
-    result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
+    result = await session.execute(base.order_by(Lead.updated_at.desc()).limit(limit).offset(offset))
     leads = list(result.scalars().all())
     if not leads:
         return [], int(total)
@@ -224,6 +224,22 @@ async def list_leads_enriched(
             "channel_replies": channel_replies_by_lead.get(lead.id, {}),
         })
     return enriched, int(total)
+
+
+async def update_lead(session: AsyncSession, user_id: int, lead_id: int, dto) -> Lead | None:
+    lead = await session.scalar(select(Lead).where(Lead.id == lead_id, Lead.user_id == user_id))
+    if lead is None:
+        return None
+    for field in ("email", "first_name", "last_name", "phone", "linkedin_url", "company", "title"):
+        val = getattr(dto, field, None)
+        if val is not None:
+            setattr(lead, field, val)
+        elif getattr(dto, field) is None and field not in ("email",):
+            setattr(lead, field, None)
+    lead.identity_hash = canonical_identity(lead.email, lead.phone, lead.linkedin_url)
+    await session.commit()
+    await session.refresh(lead)
+    return lead
 
 
 async def delete_lead(session: AsyncSession, user_id: int, lead_id: int) -> bool:

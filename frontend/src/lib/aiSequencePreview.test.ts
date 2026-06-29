@@ -28,6 +28,7 @@ const savedStep = (partial: Partial<StepOut> & Pick<StepOut, "id" | "step_order"
   sequence_id: 1,
   delay_days: 0,
   delay_hours: 0,
+  delay_minutes: 0,
   subject: null,
   config: {},
   created_at: "2026-01-01T00:00:00Z",

@@ -17,6 +17,7 @@ function mockStep(
     channel,
     delay_days,
     delay_hours,
+    delay_minutes: 0,
     subject: null,
     body: "body",
     config: {},

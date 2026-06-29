@@ -81,6 +81,11 @@ export async function createLead(dto: Partial<Omit<LeadOut, "id" | "created_at" 
   return r.data;
 }
 
+export async function updateLead(id: number, dto: Partial<Omit<LeadOut, "id" | "created_at" | "updated_at" | "source" | "latest_reply" | "channel_replies">>): Promise<LeadOut> {
+  const r = await api.patch<LeadOut>(`/leads/${id}`, dto);
+  return r.data;
+}
+
 export async function deleteLead(id: number): Promise<void> {
   await api.delete(`/leads/${id}`);
 }

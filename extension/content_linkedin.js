@@ -13,7 +13,7 @@
   // Content-script build marker — printed on every injection. Confirms which
   // content-script version is live from the LinkedIn tab's DevTools (the SW
   // build marker only proves the worker; this proves the page code).
-  const COHERENT_CS_BUILD = '2026-06-23-like-v40';
+  const COHERENT_CS_BUILD = '2026-06-28-connect-premium-fallback-v43';
   LOG('content_linkedin.js loaded — build', COHERENT_CS_BUILD);
 
   // 45s: the DM flow alone can spend ~8s waiting for Send to enable plus the
@@ -747,35 +747,53 @@
   // ── DM execution ────────────────────────────────────────────────────────
   async function executeDm(cmd) {
     await waitFor(() => document.querySelector('main'));
-    assertOnTargetProfile(cmd);
 
-    // Clear ALL leftover floating chat windows from a PREVIOUS DM *first*. They
-    // overlay the profile top-card, so the identity check below would otherwise
-    // read the messaging UI instead of the person (observed live: shivendra
-    // failed profile_dom_mismatch with domName="Messaging" h1="none" right after
-    // aditya's DM left an overlay open). Clean the page BEFORE verifying who we're
-    // on — this is what makes back-to-back sends to many people reliable.
-    await closeAllMessageOverlays();
-    await sleep(500);
+    // Fast-path: LinkedIn's Message button sometimes does a full-page navigation
+    // to /messaging/thread/new?... instead of opening a modal overlay. When that
+    // happens a later executeWithSelfHeal retry arrives with the URL already on
+    // the messaging compose page and assertOnTargetProfile throws
+    // wrong_profile_page [have=none]. Detect this and skip to the composer
+    // directly — we're already on the right page.
+    const onMessaging = location.pathname.startsWith('/messaging/');
+    let targetName, targetUrn;
+    if (onMessaging) {
+      // Derive approximate display name from the profile vanity slug so
+      // findConversationFor can do a name-based match in the compose form.
+      const vanity = vanityOf(cmd.target_li_url);
+      targetName = vanity.replace(/-\d+$/, '').replace(/-/g, ' ');
+      targetUrn = '';
+      LOG(`executeDm: messaging page — derived name="${targetName}"`);
+    } else {
+      assertOnTargetProfile(cmd);
 
-    // Who we must message — verified against the open conversation before
-    // typing. Waits for the rendered profile to actually BE the target (URL
-    // alone lies mid-transition); throws profile_dom_mismatch otherwise.
-    const targetName = await waitForTargetProfileDom(cmd);
+      // Clear ALL leftover floating chat windows from a PREVIOUS DM *first*. They
+      // overlay the profile top-card, so the identity check below would otherwise
+      // read the messaging UI instead of the person (observed live: shivendra
+      // failed profile_dom_mismatch with domName="Messaging" h1="none" right after
+      // aditya's DM left an overlay open). Clean the page BEFORE verifying who we're
+      // on — this is what makes back-to-back sends to many people reliable.
+      await closeAllMessageOverlays();
+      await sleep(500);
 
-    // Resolve the precise top-card Message control AND the recipient's encoded
-    // URN from its compose href. The URN positively identifies the chat window
-    // that opens, even if a leftover window for someone else is present.
-    const control = profileMessageControl();
-    const targetUrn = (control && control.urn) || '';
-    // Click the MAIN profile Message control (the compose <a>), never a sidebar
-    // one. Fall back to the labelled top-card button, then registry/heal.
-    const msgBtn = (control && control.el)
-      || findProfileMessageButton()
-      || await waitFor(() => findResilient('messageButton', /^message$/i), COMMAND_TIMEOUT_MS);
-    if (!msgBtn) throw new Error('messageButton_not_found_even_after_heal');
-    msgBtn.click();
-    LOG(`Clicked Message for "${targetName}" (urn=${targetUrn || 'n/a'}) — waiting for composer dialog…`);
+      // Who we must message — verified against the open conversation before
+      // typing. Waits for the rendered profile to actually BE the target (URL
+      // alone lies mid-transition); throws profile_dom_mismatch otherwise.
+      targetName = await waitForTargetProfileDom(cmd);
+
+      // Resolve the precise top-card Message control AND the recipient's encoded
+      // URN from its compose href. The URN positively identifies the chat window
+      // that opens, even if a leftover window for someone else is present.
+      const control = profileMessageControl();
+      targetUrn = (control && control.urn) || '';
+      // Click the MAIN profile Message control (the compose <a>), never a sidebar
+      // one. Fall back to the labelled top-card button, then registry/heal.
+      const msgBtn = (control && control.el)
+        || findProfileMessageButton()
+        || await waitFor(() => findResilient('messageButton', /^message$/i), COMMAND_TIMEOUT_MS);
+      if (!msgBtn) throw new Error('messageButton_not_found_even_after_heal');
+      msgBtn.click();
+      LOG(`Clicked Message for "${targetName}" (urn=${targetUrn || 'n/a'}) — waiting for composer dialog…`);
+    }
 
     // Wait for the dialog to appear and finish animating in. LinkedIn renders
     // the "New message" composer inside #interop-outlet's open shadow DOM, so
@@ -801,23 +819,39 @@
       () => findConversationFor(targetName, targetUrn), 7000,
     ).catch(() => null);
     if (!conv) {
-      // One clean in-flow retry before aborting: a leftover/minimized window
-      // can swallow the first Message click (LinkedIn focuses it instead of
-      // opening the target's). Nothing has been typed or sent yet, so this is
-      // safe. Clear overlays again, re-click Message, wait once more.
-      LOG('Target conversation not found — clearing overlays and re-clicking Message…');
-      await closeAllMessageOverlays();
-      await sleep(500);
-      const againCtl = profileMessageControl();
-      const again = (againCtl && againCtl.el) || findProfileMessageButton();
-      if (again) {
-        again.click();
-        await sleep(1200);
-        await focusComposerArea();
+      if (!onMessaging) {
+        // One clean in-flow retry before aborting: a leftover/minimized window
+        // can swallow the first Message click (LinkedIn focuses it instead of
+        // opening the target's). Nothing has been typed or sent yet, so this is
+        // safe. Clear overlays again, re-click Message, wait once more.
+        LOG('Target conversation not found — clearing overlays and re-clicking Message…');
+        await closeAllMessageOverlays();
+        await sleep(500);
+        const againCtl = profileMessageControl();
+        const again = (againCtl && againCtl.el) || findProfileMessageButton();
+        if (again) {
+          again.click();
+          await sleep(1200);
+          await focusComposerArea();
+        }
+        conv = await waitFor(
+          () => findConversationFor(targetName, targetUrn), 8000,
+        ).catch(() => null);
+      } else {
+        // On the full-page messaging compose, the DOM structure differs from the
+        // floating overlay so findConversationFor may not match. Fall back to
+        // using the visible editor directly — we navigated here FROM the target's
+        // profile so it's guaranteed to be the right recipient.
+        const ed = deepQuerySelector(CONV_EDITOR_SEL);
+        if (ed) {
+          const win = composedClosest(ed,
+            '.msg-overlay-conversation-bubble, .msg-convo-wrapper, .msg-thread, '
+            + '[role="dialog"], [aria-modal="true"], aside, section')
+            || ed.parentElement;
+          conv = { editor: ed, win, names: [targetName], via: 'messaging_page' };
+          LOG(`executeDm: built conv from messaging page editor directly`);
+        }
       }
-      conv = await waitFor(
-        () => findConversationFor(targetName, targetUrn), 8000,
-      ).catch(() => null);
     }
     if (!conv) {
       // Embed a compact DOM-state snapshot in the error so the backend's
@@ -1178,39 +1212,85 @@
     }
     await sleep(300);
 
-    const withNote = !!cmd.body_text;
+    // ── Premium-upsell guard ─────────────────────────────────────────────────
+    // LinkedIn can show the "You're out of free custom notes" modal at TWO
+    // points: (a) immediately after clicking Connect, or (b) after clicking
+    // "Add a note". Check right here (before entering any note flow) so we
+    // catch case (a) without waiting for a non-existent "Add a note" button.
+    async function dismissPremiumPopupIfPresent() {
+      const allDialogs = deepQuerySelectorAll('[role="dialog"], [aria-modal="true"], .artdeco-modal');
+      const popup = allDialogs.find(el =>
+        /out of free custom notes|personalized invites with premium/i.test(el.innerText || '')
+      );
+      if (!popup) return false;
+      LOG('Premium upsell detected — dismissing, will send without note');
+      const closeBtn =
+        popup.querySelector('button[aria-label="Dismiss"]') ||
+        popup.querySelector('button[aria-label="Close"]') ||
+        popup.querySelector('button.artdeco-modal__dismiss') ||
+        popup.querySelector('button.artdeco-button--circle') ||
+        [...popup.querySelectorAll('button')].find(b => {
+          const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+          const txt = (b.innerText || b.textContent || '').trim();
+          return /dismiss|close/i.test(lbl) || txt === '×' || txt === '✕' || txt === 'X' || (txt === '' && b.querySelector('svg,li-icon'));
+        });
+      if (closeBtn) { closeBtn.click(); }
+      else { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); }
+      await sleep(700);
+      // Re-click Connect if closing the popup also dismissed the connect dialog
+      if (!findConnectSendButton(false)) {
+        LOG('Connect dialog also closed — re-clicking Connect for no-note send');
+        const reconnect = findConnectControl() || await findResilient('connectButton', /^connect$/i).catch(() => null);
+        if (reconnect) { reconnect.click(); await sleep(800); }
+      }
+      return true; // premium popup was present
+    }
+
+    let withNote = !!cmd.body_text;
+    // Case (a): premium popup appeared immediately after clicking Connect
+    if (withNote && await dismissPremiumPopupIfPresent()) {
+      withNote = false;
+    }
+
     if (withNote) {
       // ── with-note flow ──────────────────────────────────────────────────
       const addNoteBtn = await waitFor(
         () => deepQuerySelector('button[aria-label="Add a note"]')
            || findResilient('addNoteButton', /^add a note$/i),
         8000,
-      );
+      ).catch(() => null);
       if (!addNoteBtn) throw new Error('addNoteButton_not_found_even_after_heal');
       addNoteBtn.click();
-      await sleep(400);
+      await sleep(600);
 
-      let note = await waitFor(
-        () => deepQuerySelector(
-          '[data-test-modal] textarea, .send-invite-modal textarea, [role="dialog"] textarea, '
-          + 'textarea#custom-message, textarea[name="message"]',
-        ),
-        5000,
-      ).catch(() => null);
-      if (!note) note = await findResilient('noteTextarea');
-      if (!note) throw new Error('noteTextarea_not_found_even_after_heal');
-      note.focus();
-      // The note textarea is a controlled component — a direct `note.value = …`
-      // assignment is swallowed by the framework's value tracker, leaving Send
-      // disabled. Use the native prototype setter (same trick as the DM path)
-      // so the tracked value updates and the input event actually registers.
-      const valueSetter = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype, 'value',
-      ).set;
-      valueSetter.call(note, cmd.body_text.slice(0, 300));
-      note.dispatchEvent(new Event('input',  { bubbles: true, composed: true }));
-      note.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-      await sleep(250);
+      // Case (b): premium popup appeared after clicking "Add a note"
+      if (await dismissPremiumPopupIfPresent()) {
+        withNote = false;
+      }
+
+      if (withNote) {
+        let note = await waitFor(
+          () => deepQuerySelector(
+            '[data-test-modal] textarea, .send-invite-modal textarea, [role="dialog"] textarea, '
+            + 'textarea#custom-message, textarea[name="message"]',
+          ),
+          5000,
+        ).catch(() => null);
+        if (!note) note = await findResilient('noteTextarea');
+        if (!note) throw new Error('noteTextarea_not_found_even_after_heal');
+        note.focus();
+        // The note textarea is a controlled component — a direct `note.value = …`
+        // assignment is swallowed by the framework's value tracker, leaving Send
+        // disabled. Use the native prototype setter (same trick as the DM path)
+        // so the tracked value updates and the input event actually registers.
+        const valueSetter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype, 'value',
+        ).set;
+        valueSetter.call(note, cmd.body_text.slice(0, 300));
+        note.dispatchEvent(new Event('input',  { bubbles: true, composed: true }));
+        note.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+        await sleep(250);
+      }
     }
 
     // Wait for the correct send button to be ENABLED, not merely present.

@@ -16,6 +16,7 @@ class SequenceStep(Base, TimestampMixin):
         ),
         CheckConstraint("delay_days BETWEEN 0 AND 365", name="ck_steps_delay_days"),
         CheckConstraint("delay_hours BETWEEN 0 AND 23", name="ck_steps_delay_hours"),
+        CheckConstraint("delay_minutes BETWEEN 0 AND 59", name="ck_steps_delay_minutes"),
         {"schema": SCHEMA},
     )
 
@@ -27,6 +28,7 @@ class SequenceStep(Base, TimestampMixin):
     channel: Mapped[str] = mapped_column(String(20), nullable=False)
     delay_days: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     delay_hours: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    delay_minutes: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
 
     subject: Mapped[str | None] = mapped_column(Text)
     body: Mapped[str] = mapped_column(Text, nullable=False)
