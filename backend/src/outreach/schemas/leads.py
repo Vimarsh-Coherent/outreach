@@ -16,6 +16,29 @@ class LeadCreate(BaseModel):
     title: str | None = None
 
 
+class LeadUpdate(BaseModel):
+    """Partial update — only fields present in the request body are changed.
+    Use `exclude_unset=True` when reading this so "not sent" and "sent as
+    null" are distinguishable (the latter clears the field)."""
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    linkedin_url: str | None = None
+    company: str | None = None
+    title: str | None = None
+
+
+class LatestReplyOut(BaseModel):
+    event_id: int
+    occurred_at: datetime
+    body: str | None
+    channel: str = "email"
+    sentiment_label: str | None
+    sentiment_confidence: float | None
+    sentiment_reasoning: str | None
+
+
 class LeadOut(BaseModel):
     id: int
     email: str | None
@@ -28,6 +51,8 @@ class LeadOut(BaseModel):
     source: str | None
     created_at: datetime
     updated_at: datetime
+    latest_reply: LatestReplyOut | None = None
+    channel_replies: dict[str, LatestReplyOut] = Field(default_factory=dict)
 
 
 class LeadListResponse(BaseModel):

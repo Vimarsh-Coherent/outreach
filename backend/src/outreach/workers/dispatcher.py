@@ -35,11 +35,19 @@ from outreach.services.cap_check import bump_or_reject, refund_one
 from outreach.services.jitter import add_jitter
 from outreach.services.send_window import next_valid_slot
 from outreach.services.suppressions_service import is_suppressed
-from outreach.services.template_render import render
+from outreach.services.template_render import build_render_snapshot, render
 from outreach.services.threading_email import make_message_id
 from outreach.utils.crypto import decrypt_json
 
 log = logging.getLogger("outreach.workers")
+
+
+def _include_meeting_link(step: SequenceStep) -> bool:
+    """First email never carries a scheduling link; follow-ups from step 2 onward may."""
+    if step.channel == "email":
+        return step.step_order >= 2
+    return True
+
 
 # ----------- claim phase -----------
 
@@ -176,6 +184,13 @@ async def _advance_enrolment(
         e.stopped_at = datetime.now(timezone.utc)
         e.stopped_reason = "completed"
         e.next_send_at = None
+    elif next_step.delay_days == 0 and next_step.delay_hours == 0:
+        # Zero-delay step: fire immediately, back-to-back with the one that
+        # just sent — don't snap into the send window. The window exists to
+        # avoid off-hours sends; a delay=0 step is chained to a step that
+        # already cleared that check moments ago, so re-snapping it just
+        # strands it until tomorrow's window instead of sending it now.
+        e.next_send_at = add_jitter(datetime.now(timezone.utc))
     else:
         slot = next_valid_slot(
             base=datetime.now(timezone.utc),
@@ -297,8 +312,10 @@ async def process_one(claim: dict) -> dict:
             return {"step_run_id": step_run_id, "result": "missing_enrolment"}
 
         # Sender name for {{sender_name}} sign-offs — the sending user's display name.
+        # meeting_link is their scheduling URL (Calendly/Cal.com/etc), for {{meeting_link}}.
         sender = await session.get(User, enrolment.user_id)
         sender_name = sender.display_name if sender else ""
+        meeting_link = (sender.meeting_link if sender else None) or ""
 
         step = await session.scalar(select(SequenceStep).where(SequenceStep.id == run.step_id))
         if step is None:
@@ -317,8 +334,6 @@ async def process_one(claim: dict) -> dict:
         # Manual tasks (call / sms) — log reminder and advance. WhatsApp is now
         # a real automated channel (handled below), no longer a manual no-op.
         if step.channel in ("call", "sms"):
-            from outreach.models.event import Event
-
             run.status = "sent"
             run.sent_at = datetime.now(timezone.utc)
             run.provider_message_id = f"manual-{step.channel}-{run.id}"
@@ -341,17 +356,47 @@ async def process_one(claim: dict) -> dict:
         # LinkedIn: mint a li_command, mark step_run as queued_external, leave
         # enrolment paused (next_send_at=NULL) — the extension webhook on
         # /api/extension/commands/{id}/complete will advance it. Per PLAN §7.
-        if step.channel in ("linkedin_dm", "linkedin_connect"):
+        if step.channel in ("linkedin_dm", "linkedin_connect", "linkedin_like"):
             from datetime import timedelta
             from outreach.models.li_command import LinkedInCommand
 
-            # Acceptance gate: a DM that follows a connect is parked until the
-            # invite is accepted. If we got here with the gate still set, the
-            # timeout deadline elapsed without acceptance — skip the DM (we can't
-            # message a non-connection) and advance to the next step.
+            # Acceptance gate: a DM behind a connect (possibly with other
+            # channel steps in between) is parked until the invite is
+            # accepted. Only skip once the accept-timeout window has actually
+            # elapsed — we can't message a non-connection. Before that, defer
+            # without advancing so it's re-checked once acceptance is
+            # detected (routes_extension.connections_seen) or the deadline
+            # passes.
             if step.channel == "linkedin_dm":
                 state = enrolment.runtime_state or {}
                 if state.get("awaiting_acceptance"):
+                    since_raw = state.get("awaiting_since")
+                    elapsed_days = None
+                    if since_raw:
+                        try:
+                            since = datetime.fromisoformat(since_raw)
+                            elapsed_days = (datetime.now(timezone.utc) - since).total_seconds() / 86400
+                        except ValueError:
+                            elapsed_days = None
+                    timed_out = elapsed_days is None or elapsed_days >= get_settings().li_accept_timeout_days
+                    if not timed_out:
+                        run.status = "skipped"
+                        run.error_message = "connection not yet accepted — waiting"
+                        seq_for_wait = await session.scalar(
+                            select(Sequence).where(Sequence.id == enrolment.sequence_id)
+                        )
+                        recheck_base = datetime.now(timezone.utc) + timedelta(hours=3)
+                        enrolment.next_send_at = (
+                            next_valid_slot(
+                                base=recheck_base, delay_days=0, delay_hours=0,
+                                tz_name=seq_for_wait.timezone,
+                                window_start=seq_for_wait.send_window_start,
+                                window_end=seq_for_wait.send_window_end,
+                                days_mask=seq_for_wait.send_days_mask,
+                            ) if seq_for_wait is not None else recheck_base
+                        )
+                        await session.commit()
+                        return {"step_run_id": step_run_id, "result": "awaiting_acceptance"}
                     run.status = "skipped"
                     run.error_message = "connection not accepted within timeout window"
                     enrolment.runtime_state = {
@@ -393,12 +438,17 @@ async def process_one(claim: dict) -> dict:
             # enforce here at mint time: count this user's commands of this
             # type in the rolling 24h window; at cap, defer a few hours
             # without burning the lead or advancing the step.
-            command_type = "dm" if step.channel == "linkedin_dm" else "connect"
-            settings = get_settings()
-            type_cap = (
-                settings.li_daily_cap_dm if command_type == "dm"
-                else settings.li_daily_cap_connect
+            command_type = (
+                "dm" if step.channel == "linkedin_dm"
+                else "like" if step.channel == "linkedin_like"
+                else "connect"
             )
+            settings = get_settings()
+            type_cap = {
+                "dm": settings.li_daily_cap_dm,
+                "connect": settings.li_daily_cap_connect,
+                "like": settings.li_daily_cap_like,
+            }[command_type]
             used = int(await session.scalar(text(
                 "SELECT COUNT(*) FROM outreach.li_commands "
                 "WHERE user_id = :uid AND command_type = :ct "
@@ -450,33 +500,47 @@ async def process_one(claim: dict) -> dict:
                 await session.commit()
                 return {"step_run_id": step_run_id, "result": "extension_offline"}
 
-            snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
-            rendered_body = render(step.body, snapshot)
-            # Per-lead AI personalization (Phase 3). Gated by the step's
-            # ai_personalize flag, or the global default. Fail-open: the
-            # personalizer never raises and returns the template on any error,
-            # so a send never blocks on Anthropic availability.
-            if step.config.get("ai_personalize") or get_settings().ai_personalize_linkedin_default:
-                from outreach.services import personalizer
-
-                copy = await personalizer.personalize_linkedin(
-                    kind=command_type,
-                    rendered_body=rendered_body,
-                    snapshot=snapshot,
-                    offering=None,
+            # A like carries no message text — nothing to render or
+            # personalize. It also targets the lead's recent-activity feed
+            # (where the extension can find their latest post) rather than
+            # the plain profile URL used for connect/DM.
+            if command_type == "like":
+                rendered_body = ""
+                like_target_url = target_li_url.rstrip("/") + "/recent-activity/all/"
+            else:
+                snapshot = build_render_snapshot(
+                    enrolment.contact_snapshot,
+                    sender_name=sender_name,
+                    meeting_link=meeting_link,
+                    include_meeting_link=_include_meeting_link(step),
                 )
-                if copy.used_ai:
-                    log.info(
-                        "personalized linkedin %s for enrolment=%s (lead=%s)",
-                        command_type, enrolment.id, snapshot.get("first_name"),
+                rendered_body = render(step.body, snapshot)
+                # Per-lead AI personalization (Phase 3). Gated by the step's
+                # ai_personalize flag, or the global default. Fail-open: the
+                # personalizer never raises and returns the template on any error,
+                # so a send never blocks on Anthropic availability.
+                if step.config.get("ai_personalize") or get_settings().ai_personalize_linkedin_default:
+                    from outreach.services import personalizer
+
+                    copy = await personalizer.personalize_linkedin(
+                        kind=command_type,
+                        rendered_body=rendered_body,
+                        snapshot=snapshot,
+                        offering=None,
                     )
-                rendered_body = copy.body
+                    if copy.used_ai:
+                        log.info(
+                            "personalized linkedin %s for enrolment=%s (lead=%s)",
+                            command_type, enrolment.id, snapshot.get("first_name"),
+                        )
+                    rendered_body = copy.body
+                like_target_url = target_li_url
             cmd = LinkedInCommand(
                 user_id=enrolment.user_id,
                 enrolment_id=enrolment.id,
                 step_id=step.id,
                 command_type=command_type,
-                target_li_url=target_li_url,
+                target_li_url=like_target_url,
                 body_text=rendered_body,
                 status="pending",
             )
@@ -529,7 +593,12 @@ async def process_one(claim: dict) -> dict:
                 return {"step_run_id": step_run_id, "result": "cap_hit"}
 
             wa_channel_id = wa_channel.id
-            snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
+            snapshot = build_render_snapshot(
+                enrolment.contact_snapshot,
+                sender_name=sender_name,
+                meeting_link=meeting_link,
+                include_meeting_link=_include_meeting_link(step),
+            )
             rendered_body = render(step.body, snapshot)
             await session.commit()  # release row locks before the sidecar HTTP call
 
@@ -605,15 +674,36 @@ async def process_one(claim: dict) -> dict:
 
     # ---- SMTP call OUTSIDE any DB transaction ----
     message_id = make_message_id(step_run_id)
-    snapshot = {**(enrolment.contact_snapshot or {}), "sender_name": sender_name}
+    include_link = _include_meeting_link(step)
+
+    async with SessionLocal() as session_seq:
+        seq = await session_seq.scalar(select(Sequence).where(Sequence.id == enrolment.sequence_id))
+    ai_followup = seq is not None and seq.ai_followups_enabled and step.step_order >= 2
+    snapshot_include_link = include_link
+    if ai_followup:
+        from outreach.services.followup_agent import resolve_include_meeting_link
+
+        async with SessionLocal() as session_sent:
+            snapshot_include_link, reply_sentiment = await resolve_include_meeting_link(
+                session_sent, enrolment.lead_id, step_order=step.step_order,
+            )
+        log.info(
+            "ai follow-up enrol=%d step=%d sentiment=%s meeting_link=%s",
+            enrolment.id, step.step_order, reply_sentiment, snapshot_include_link,
+        )
+
+    snapshot = build_render_snapshot(
+        enrolment.contact_snapshot,
+        sender_name=sender_name,
+        meeting_link=meeting_link,
+        include_meeting_link=snapshot_include_link,
+    )
     rendered_subject = render(step.subject, snapshot)
     rendered_body = render(step.body, snapshot)
 
     # Auto-draft for sequences with AI follow-ups enabled, starting at step >= 2
     # (step 1 is the cold opener — no prior context to personalise against).
-    async with SessionLocal() as session_seq:
-        seq = await session_seq.scalar(select(Sequence).where(Sequence.id == enrolment.sequence_id))
-    if seq is not None and seq.ai_followups_enabled and step.step_order >= 2:
+    if ai_followup:
         try:
             from outreach.services.followup_agent import draft_for_lead
             async with SessionLocal() as session_draft:
@@ -622,6 +712,7 @@ async def process_one(claim: dict) -> dict:
                     template_subject=step.subject or "Following up",
                     template_body=step.body,
                     contact_snapshot=snapshot,
+                    include_meeting_link=snapshot_include_link,
                 )
             rendered_subject = draft.subject
             rendered_body = draft.body

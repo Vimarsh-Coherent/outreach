@@ -14,8 +14,14 @@ from outreach.schemas.dashboard import (
 )
 
 
+def _since(days: int) -> datetime:
+    if days <= 0:
+        return datetime(2000, 1, 1, tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
 async def summary(session: AsyncSession, user_id: int, days: int = 30) -> DashboardSummary:
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = _since(days)
 
     enrolled = int(await session.scalar(text(
         "SELECT COUNT(*) FROM outreach.enrolments "
@@ -70,7 +76,7 @@ async def sentiment_timeseries(
     session: AsyncSession, user_id: int, days: int = 30,
     bucket: Literal["day", "week"] = "day",
 ) -> SentimentTimeseriesResponse:
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = _since(days)
     trunc = "day" if bucket == "day" else "week"
 
     rows = (await session.execute(text(
@@ -105,7 +111,7 @@ async def sentiment_timeseries(
 
 
 async def sequences_stats(session: AsyncSession, user_id: int, days: int = 30) -> list[SequenceStats]:
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = _since(days)
     rows = (await session.execute(text(
         """
         SELECT s.id, s.name, s.status,
@@ -162,7 +168,7 @@ async def sequences_stats(session: AsyncSession, user_id: int, days: int = 30) -
 
 
 async def hot_leads(session: AsyncSession, user_id: int, days: int = 7, limit: int = 25) -> list[HotLead]:
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = _since(days)
     # Latest positive/interested sentiment per lead.
     rows = (await session.execute(text(
         """

@@ -46,6 +46,19 @@ const INBOUND_URL = process.env.WA_BACKEND_INBOUND_URL || "";
 
 const log = pino({ level: process.env.WA_LOG_LEVEL || "info" });
 
+// Baileys occasionally rejects an internal promise (e.g. a keep-alive ping)
+// with the raw WS close code when the socket drops abnormally (code 1006) —
+// that rejection is never attached to a .catch(), so by default Node treats
+// it as fatal and kills the whole sidecar even though connection.update's own
+// "closed — reconnecting" handler below is already recovering. Don't let a
+// stray rejection from a socket we're already replacing take the process down.
+process.on("unhandledRejection", (reason) => {
+  log.warn({ err: String(reason) }, "unhandled rejection — ignoring (reconnect already in flight)");
+});
+process.on("uncaughtException", (err) => {
+  log.error({ err: String(err) }, "uncaught exception — ignoring (reconnect already in flight)");
+});
+
 // ── connection state machine ────────────────────────────────────────────────
 // state: 'starting' | 'qr' | 'connected' | 'disconnected' | 'logged_out'
 let state = "starting";
@@ -91,6 +104,8 @@ async function start() {
       printQRInTerminal: false,
       markOnlineOnConnect: false,
       browser: ["Coherent Outreach", "Chrome", "1.0.0"],
+      defaultQueryTimeoutMs: undefined, // disable per-query timeout so fetchProps never times out
+      connectTimeoutMs: 60_000,
     });
 
     sock.ev.on("creds.update", saveCreds);
@@ -117,8 +132,16 @@ async function start() {
         const loggedOut = code === DisconnectReason.loggedOut;
         currentQR = null;
         if (loggedOut) {
-          state = "logged_out";
-          log.warn("session logged out — wipe session and re-scan QR");
+          log.warn("session logged out — wiping session and restarting for fresh QR");
+          state = "starting";
+          currentQR = null;
+          meId = null;
+          sock = null;
+          try { rmSync(SESSION_PATH, { recursive: true, force: true }); } catch (_) {}
+          mkdirSync(SESSION_PATH, { recursive: true });
+          starting = false;
+          start();
+          return;
         } else {
           state = "disconnected";
           log.warn({ code }, "connection closed — reconnecting");
@@ -130,22 +153,28 @@ async function start() {
     });
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
+      log.info({ type, count: messages.length }, "messages.upsert fired");
+      const cutoff = type === "notify" ? 0 : Date.now() / 1000 - 600;
       for (const m of messages) {
         try {
           if (!m.message || m.key.fromMe) continue;
+          if (Number(m.messageTimestamp) < cutoff) continue;
           const jid = m.key.remoteJid || "";
-          if (jid.endsWith("@g.us") || jid === "status@broadcast") continue; // skip groups/status
+          if (jid.endsWith("@g.us") || jid === "status@broadcast") continue;
           const text =
             m.message.conversation ||
             m.message.extendedTextMessage?.text ||
             m.message.imageMessage?.caption ||
             m.message.videoMessage?.caption ||
             "";
-          if (!text) continue;
+          if (!text) { log.info({ jid, msgType: Object.keys(m.message || {}) }, "no text extracted"); continue; }
+          // For LID JIDs (@lid), use senderPn for the real phone number
+          const phoneJid = (jid.endsWith("@lid") && m.key.senderPn) ? m.key.senderPn : jid;
+          const from = "+" + phoneJid.split("@")[0];
+          log.info({ from, text: text.slice(0, 50) }, "forwarding inbound");
           await postInbound({
             id: m.key.id,
-            from: jid.split("@")[0],
+            from,
             text,
             timestamp: Number(m.messageTimestamp) || null,
             push_name: m.pushName || null,
@@ -195,6 +224,24 @@ app.post("/sendText", async (req, res) => {
     res.status(502).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+// ── PAIRING CODE FEATURE — remove this block to disable phone-number linking ──
+app.post("/requestPairingCode", async (req, res) => {
+  const { phone } = req.body || {};
+  if (!phone) return res.status(400).json({ ok: false, error: "phone required" });
+  if (!sock) return res.status(503).json({ ok: false, error: "sidecar not ready" });
+  if (state === "connected") return res.status(400).json({ ok: false, error: "already connected" });
+  try {
+    const digits = String(phone).replace(/[^0-9]/g, "");
+    const code = await sock.requestPairingCode(digits);
+    log.info({ digits }, "pairing code issued");
+    res.json({ ok: true, code });
+  } catch (e) {
+    log.warn({ err: String(e) }, "requestPairingCode failed");
+    res.status(502).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+// ── END PAIRING CODE FEATURE ─────────────────────────────────────────────────
 
 app.post("/logout", async (_req, res) => {
   try {

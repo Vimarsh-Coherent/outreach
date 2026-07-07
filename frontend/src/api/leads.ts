@@ -4,6 +4,16 @@ import { api } from "./client";
 
 export type LeadField = "email" | "first_name" | "last_name" | "phone" | "linkedin_url" | "company" | "title";
 
+export interface LatestReply {
+  event_id: number;
+  occurred_at: string;
+  body: string | null;
+  channel: string;
+  sentiment_label: string | null;
+  sentiment_confidence: number | null;
+  sentiment_reasoning: string | null;
+}
+
 export interface LeadOut {
   id: number;
   email: string | null;
@@ -16,6 +26,8 @@ export interface LeadOut {
   source: string | null;
   created_at: string;
   updated_at: string;
+  latest_reply: LatestReply | null;
+  channel_replies: Record<string, LatestReply>;
 }
 
 export interface LeadListResponse {
@@ -66,6 +78,11 @@ export async function listLeads(params: { search?: string; limit?: number; offse
 
 export async function createLead(dto: Partial<Omit<LeadOut, "id" | "created_at" | "updated_at" | "source">>): Promise<LeadOut> {
   const r = await api.post<LeadOut>("/leads", dto);
+  return r.data;
+}
+
+export async function updateLead(id: number, dto: Partial<Omit<LeadOut, "id" | "created_at" | "updated_at" | "source">>): Promise<LeadOut> {
+  const r = await api.patch<LeadOut>(`/leads/${id}`, dto);
   return r.data;
 }
 

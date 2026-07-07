@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  SelectorRegistryEntry,
   WatchdogEvent,
   WatchdogTier,
+  getSelectorRegistry,
   getWatchdogState,
   resetBreaker,
   runTier,
@@ -17,11 +19,16 @@ const TIERS: { id: WatchdogTier; label: string; cadence: string; description: st
 ];
 
 const STATUS_STYLE: Record<string, string> = {
-  healthy:   "text-emerald-700 bg-emerald-50  border-emerald-200",
-  issue:     "text-amber-800   bg-amber-50    border-amber-200",
-  emergency: "text-rose-800    bg-rose-50     border-rose-200",
-  healed:    "text-violet-800  bg-violet-50   border-violet-200",
+  healthy:        "text-emerald-700 bg-emerald-50  border-emerald-200",
+  issue:          "text-amber-800   bg-amber-50    border-amber-200",
+  emergency:      "text-rose-800    bg-rose-50     border-rose-200",
+  healed:         "text-violet-800  bg-violet-50   border-violet-200",
+  pattern_change: "text-orange-900  bg-orange-50   border-orange-300",
 };
+
+function intentLabel(key: string): string {
+  return key.replace(/_/g, " ");
+}
 
 function StatusDot({ ok }: { ok: boolean }) {
   return <span className={`inline-block w-2.5 h-2.5 rounded-full ${ok ? "bg-emerald-500" : "bg-rose-500"}`} />;
@@ -42,6 +49,11 @@ export default function Watchdog() {
     queryKey: ["watchdog-state"],
     queryFn: getWatchdogState,
     refetchInterval: 10_000,
+  });
+  const { data: selectorRegistry } = useQuery({
+    queryKey: ["watchdog-selector-registry"],
+    queryFn: getSelectorRegistry,
+    refetchInterval: 15_000,
   });
 
   const runMut = useMutation({
@@ -122,6 +134,89 @@ export default function Watchdog() {
               <tr><td className="py-1 text-slate-500">events without sentiment (auto-requeues)</td><td className="py-1 text-right font-mono">{state?.unclassified_events ?? 0}</td></tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="rounded border bg-white p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold">LinkedIn selector health</h3>
+          <span className="text-xs text-slate-400">
+            Auto-detects when LinkedIn changes its page layout and rebuilds selectors via AI heal
+          </span>
+        </div>
+
+        {!!state?.li_fragile_intents.length && (
+          <div className="mb-3 rounded border border-orange-300 bg-orange-50 p-3 text-sm text-orange-900">
+            <div className="font-semibold">⚠ Pattern change suspected</div>
+            <div className="mt-1">
+              These elements have failed repeatedly in the last 24h — the watchdog is auto-healing them and
+              pushing fresh selectors to the extension:
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {state.li_fragile_intents.map(k => (
+                <span key={k} className="inline-block rounded-full border border-orange-300 bg-white px-2 py-0.5 text-xs font-mono">
+                  {intentLabel(k)}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!!state && Object.keys(state.li_failure_by_intent).length > 0 && (
+          <div className="mb-4">
+            <div className="text-xs text-slate-500 uppercase mb-1.5">Failure counts (rolling 24h)</div>
+            <table className="w-full text-sm">
+              <tbody>
+                {Object.entries(state.li_failure_by_intent)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([key, count]) => (
+                    <tr key={key} className="border-t">
+                      <td className="py-1 text-slate-600 font-mono text-xs">{intentLabel(key)}</td>
+                      <td className={`py-1 text-right font-mono ${count >= 2 ? "text-orange-700 font-semibold" : ""}`}>{count}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div>
+          <div className="text-xs text-slate-500 uppercase mb-1.5">Current selector registry (server-persisted)</div>
+          {!selectorRegistry?.length ? (
+            <p className="text-sm text-slate-500">
+              No selectors auto-healed yet. When LinkedIn changes its layout, healed selectors will appear here and sync
+              to the extension automatically.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-slate-500">
+                  <tr>
+                    <th className="py-1 pr-3">Intent</th>
+                    <th className="py-1 pr-3">Current selector</th>
+                    <th className="py-1 pr-3">Source</th>
+                    <th className="py-1 pr-3 text-right">Heal count</th>
+                    <th className="py-1 pr-3">Last updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectorRegistry.map((r: SelectorRegistryEntry) => (
+                    <tr key={`${r.channel_id}-${r.intent}`} className="border-t">
+                      <td className="py-1.5 pr-3 font-medium">{r.intent}</td>
+                      <td className="py-1.5 pr-3 font-mono text-xs text-slate-600">{r.selectors[0]}</td>
+                      <td className="py-1.5 pr-3 text-xs">
+                        <span className={`px-1.5 py-0.5 rounded ${r.source === "preemptive" ? "bg-violet-100 text-violet-800" : "bg-slate-100 text-slate-600"}`}>
+                          {r.source}
+                        </span>
+                      </td>
+                      <td className={`py-1.5 pr-3 text-right font-mono ${r.heal_count >= 2 ? "text-orange-700 font-semibold" : ""}`}>{r.heal_count}</td>
+                      <td className="py-1.5 pr-3 text-xs font-mono text-slate-500">{timeAgo(r.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </section>
 

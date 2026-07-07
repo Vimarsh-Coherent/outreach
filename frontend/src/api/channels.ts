@@ -134,3 +134,27 @@ export async function logoutWhatsApp(): Promise<{ ok: boolean }> {
   const r = await api.post<{ ok: boolean }>("/channels/whatsapp/logout", {});
   return r.data;
 }
+
+// PAIRING CODE FEATURE — remove this function to disable phone-number linking
+export async function requestWaPairingCode(phone: string): Promise<{ ok: boolean; code?: string; error?: string }> {
+  const r = await api.post("/whatsapp/pairing-code", { phone });
+  return r.data;
+}
+// END PAIRING CODE FEATURE
+
+// ── LinkedIn (Chrome extension bridge) ──────────────────────────────────────
+
+export interface LinkedInChannelCreated {
+  id: number;
+  display_label: string;
+  daily_cap: number;
+  raw_token: string; // shown ONCE — paste into the extension popup, then it's gone
+}
+
+export async function createLinkedInChannel(body: {
+  display_label: string;
+  daily_cap: number;
+}): Promise<LinkedInChannelCreated> {
+  const r = await api.post<LinkedInChannelCreated>("/channels/linkedin", body);
+  return r.data;
+}

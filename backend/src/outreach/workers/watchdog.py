@@ -359,6 +359,7 @@ async def stuck_state_sweep() -> dict:
         except Exception:  # noqa: BLE001
             fragile = []
         heal_intents: list[str] = []
+        pattern_change_intents: list[str] = []
         if fragile:
             from outreach.schemas.selector_heal import HealRequest
             from outreach.services import selector_healer as _healer
@@ -385,6 +386,14 @@ async def stuck_state_sweep() -> dict:
                 intent = INTENT_MAP.get(key)
                 if intent and intent not in seen:
                     seen.add(intent)
+            li_channel_ids: list[int] = []
+            if seen:
+                li_channel_ids = [
+                    r[0] for r in (await session.execute(text(
+                        "SELECT id FROM outreach.channels "
+                        "WHERE channel_type = 'linkedin' AND status = 'active'"
+                    ))).all()
+                ]
             for intent in seen:
                 try:
                     req = HealRequest(
@@ -394,10 +403,28 @@ async def stuck_state_sweep() -> dict:
                     resp = await _healer.heal_selector(req)
                     if resp.selectors:
                         heal_intents.append(f"{intent}({len(resp.selectors)})")
+                        # Persist so every active LinkedIn extension picks this up
+                        # on its next /current-selectors poll (≤30s) — closing the
+                        # loop this preemptive heal used to just log and discard.
+                        for cid in li_channel_ids:
+                            heal_count = await _healer.upsert_current_selectors(
+                                session, cid, intent, resp.selectors, source="preemptive",
+                            )
+                            if heal_count is not None and heal_count >= 2 and intent not in pattern_change_intents:
+                                pattern_change_intents.append(intent)
                 except Exception as e:  # noqa: BLE001
                     log.warning("preemptive heal for %s failed: %s", intent, e)
             if heal_intents:
                 actions.append(f"preemptive heal: {', '.join(heal_intents)}")
+            if pattern_change_intents:
+                watchdog_state.log_event(
+                    "stuck_state_sweep", "pattern_change",
+                    f"LinkedIn UI pattern change detected — repeated heals for: "
+                    f"{', '.join(pattern_change_intents)}. Fresh selectors auto-pushed "
+                    f"to every active LinkedIn extension.",
+                    intents=pattern_change_intents,
+                )
+                actions.append(f"pattern change detected + auto-rebuilt: {', '.join(pattern_change_intents)}")
 
         # Stuck enrolments
         stuck_enrol = int(await session.scalar(text(

@@ -26,6 +26,12 @@ export const STEP_CHANNEL_META: Record<StepChannel, StepChannelMeta> = {
     accent: "bg-indigo-50 text-indigo-800 border-indigo-200",
     ring: "ring-indigo-200",
   },
+  linkedin_like: {
+    label: "LinkedIn Post Like",
+    icon: "👍",
+    accent: "bg-cyan-50 text-cyan-800 border-cyan-200",
+    ring: "ring-cyan-200",
+  },
   call: {
     label: "Call Task",
     icon: "📞",

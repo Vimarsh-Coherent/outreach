@@ -2,11 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic import BaseModel
+
 from outreach.channels.email_channel import send_email
 from outreach.db import get_session
 from outreach.deps import get_current_user
 from outreach.models.channel import Channel
+from outreach.models.enrolment import Enrolment
 from outreach.models.lead import Lead
+from outreach.models.li_command import LinkedInCommand
 from outreach.models.sequence import Sequence
 from outreach.models.step import SequenceStep
 from outreach.models.user import User
@@ -17,7 +21,7 @@ from outreach.schemas.followup import (
     SendRequest,
     SendResponse,
 )
-from outreach.services.followup_agent import draft_for_lead
+from outreach.services.followup_agent import draft_for_lead, resolve_include_meeting_link
 from outreach.services.threading_email import make_message_id
 from outreach.utils.crypto import decrypt_json
 
@@ -65,10 +69,18 @@ async def draft(
             template_subject = template_subject or "Following up"
             template_body = template_body or "Hi {{first_name}},\n\nWanted to follow up — let me know what you think.\n\nBest,"
 
+    include_meeting_link, _ = await resolve_include_meeting_link(session, lead.id)
+
     draft = await draft_for_lead(
         session, lead.id,
         template_subject=template_subject,
         template_body=template_body,
+        contact_snapshot={
+            "email": lead.email, "first_name": lead.first_name,
+            "last_name": lead.last_name, "company": lead.company, "title": lead.title,
+            "sender_name": user.display_name, "meeting_link": user.meeting_link or "",
+        },
+        include_meeting_link=include_meeting_link,
     )
     return DraftResponse(
         subject=draft.subject, body=draft.body, notes=draft.notes,
@@ -125,3 +137,45 @@ async def send(
         ok=result.ok, detail=result.error or "sent",
         provider_message_id=message_id if result.ok else None,
     )
+
+
+class SendLinkedInRequest(BaseModel):
+    lead_id: int
+    body: str
+
+
+@router.post("/send-linkedin")
+async def send_linkedin(
+    req: SendLinkedInRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    lead = await session.scalar(
+        select(Lead).where(Lead.id == req.lead_id, Lead.user_id == user.id)
+    )
+    if lead is None:
+        raise HTTPException(404, "lead not found")
+    if not lead.linkedin_url:
+        raise HTTPException(400, "lead has no LinkedIn URL")
+
+    enrolment = await session.scalar(
+        select(Enrolment)
+        .where(Enrolment.lead_id == lead.id, Enrolment.user_id == user.id)
+        .order_by(Enrolment.id.desc())
+        .limit(1)
+    )
+    if enrolment is None:
+        raise HTTPException(400, "no enrolment found for this lead")
+
+    cmd = LinkedInCommand(
+        user_id=user.id,
+        enrolment_id=enrolment.id,
+        step_id=None,
+        command_type="dm",
+        target_li_url=lead.linkedin_url,
+        body_text=req.body,
+        status="pending",
+    )
+    session.add(cmd)
+    await session.commit()
+    return {"ok": True, "command_id": cmd.id}

@@ -3,8 +3,11 @@ from datetime import datetime
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from outreach.models.enrolment import Enrolment
+from outreach.models.event import Event, ReplySentiment
 from outreach.models.lead import Lead
 from outreach.services.identity import canonical_identity, linkedin_url_from_slug
 
@@ -131,6 +134,147 @@ async def list_leads(
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
     result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
     return list(result.scalars().all()), int(total)
+
+
+async def list_leads_enriched(
+    session: AsyncSession, user_id: int, *,
+    search: str | None = None, limit: int = 50, offset: int = 0,
+) -> tuple[list[dict], int]:
+    """list_leads + latest inbound reply + sentiment per lead, returned as dicts."""
+    base = select(Lead).where(Lead.user_id == user_id)
+    if search:
+        like = f"%{search}%"
+        base = base.where(or_(
+            Lead.email.ilike(like),
+            Lead.first_name.ilike(like),
+            Lead.last_name.ilike(like),
+            Lead.company.ilike(like),
+            Lead.title.ilike(like),
+        ))
+    total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    result = await session.execute(base.order_by(Lead.id.desc()).limit(limit).offset(offset))
+    leads = list(result.scalars().all())
+    if not leads:
+        return [], int(total)
+
+    lead_ids = [lead.id for lead in leads]
+
+    from sqlalchemy import text as _text
+
+    # Fetch the latest reply per (lead, channel) in one query using DISTINCT ON.
+    # Email replies are filtered to only count messages FROM the lead (not echoes
+    # of the outreach user's own replies). LinkedIn and WhatsApp replies are always
+    # from the lead side so no from-filter is needed.
+    reply_rows = (await session.execute(_text("""
+        SELECT DISTINCT ON (en.lead_id, ev.channel)
+            en.lead_id,
+            ev.channel,
+            ev.id          AS event_id,
+            ev.occurred_at,
+            ev.payload,
+            rs.label,
+            rs.confidence,
+            rs.reasoning
+        FROM outreach.enrolments en
+        JOIN outreach.events ev  ON ev.enrolment_id = en.id
+        JOIN outreach.leads  l   ON l.id = en.lead_id
+        LEFT JOIN outreach.reply_sentiment rs ON rs.event_id = ev.id
+        WHERE ev.event_type = 'reply'
+          AND en.lead_id = ANY(:lead_ids)
+          AND (
+              (ev.channel = 'email' AND ev.payload->>'from' = l.email)
+              OR ev.channel IN ('linkedin', 'whatsapp')
+          )
+        ORDER BY en.lead_id, ev.channel, ev.occurred_at DESC
+    """), {"lead_ids": lead_ids})).all()
+
+    channel_replies_by_lead: dict[int, dict[str, dict]] = {}
+    latest_by_lead: dict[int, dict] = {}
+
+    for lead_id_val, channel, ev_id, occurred_at, payload, label, confidence, reasoning in reply_rows:
+        lid = int(lead_id_val)
+        body_text = (payload.get("body") or payload.get("snippet")) if payload else None
+        entry = {
+            "event_id": ev_id,
+            "occurred_at": occurred_at,
+            "body": body_text,
+            "channel": channel,
+            "sentiment_label": label,
+            "sentiment_confidence": confidence,
+            "sentiment_reasoning": reasoning,
+        }
+        channel_replies_by_lead.setdefault(lid, {})[channel] = entry
+        if lid not in latest_by_lead or occurred_at > latest_by_lead[lid]["occurred_at"]:
+            latest_by_lead[lid] = entry
+
+    enriched = []
+    for lead in leads:
+        enriched.append({
+            "id": lead.id,
+            "email": lead.email,
+            "phone": lead.phone,
+            "linkedin_url": lead.linkedin_url,
+            "first_name": lead.first_name,
+            "last_name": lead.last_name,
+            "company": lead.company,
+            "title": lead.title,
+            "source": lead.source,
+            "created_at": lead.created_at,
+            "updated_at": lead.updated_at,
+            "latest_reply": latest_by_lead.get(lead.id),
+            "channel_replies": channel_replies_by_lead.get(lead.id, {}),
+        })
+    return enriched, int(total)
+
+
+class DuplicateIdentityError(Exception):
+    """Raised when an edit's new identity (email/phone/linkedin) collides
+    with a DIFFERENT lead already owned by this user."""
+
+
+async def update_lead(
+    session: AsyncSession, user_id: int, lead_id: int, updates: dict,
+) -> Lead | None:
+    """Partial update. `updates` should only contain keys the caller actually
+    sent (e.g. via Pydantic's `exclude_unset=True`) — omitted fields are left
+    untouched, but a field explicitly sent as null clears it.
+
+    Editing an identity field (email/phone/linkedin_url) recomputes the
+    identity_hash from the merged (existing + updated) values, so the unique
+    constraint stays consistent — the same rule create/upload already use.
+    """
+    lead = await session.scalar(
+        select(Lead).where(Lead.id == lead_id, Lead.user_id == user_id)
+    )
+    if lead is None:
+        return None
+
+    for field in ("first_name", "last_name", "company", "title"):
+        if field in updates:
+            setattr(lead, field, updates[field] or None)
+
+    identity_touched = any(f in updates for f in ("email", "phone", "linkedin_url"))
+    if identity_touched:
+        merged_email = updates.get("email", lead.email) if "email" in updates else lead.email
+        merged_phone = updates.get("phone", lead.phone) if "phone" in updates else lead.phone
+        merged_linkedin = (
+            updates.get("linkedin_url", lead.linkedin_url) if "linkedin_url" in updates else lead.linkedin_url
+        )
+        ident = canonical_identity(email=merged_email, phone=merged_phone, linkedin=merged_linkedin)
+        if ident.hash is None:
+            raise ValueError("at least one of email, phone, or linkedin_url is required")
+        lead.email = ident.email
+        lead.phone = ident.phone
+        lead.linkedin_url = linkedin_url_from_slug(ident.linkedin_slug)
+        lead.identity_hash = ident.hash
+
+    try:
+        await session.commit()
+    except IntegrityError as e:  # unique constraint on (user_id, identity_hash)
+        await session.rollback()
+        raise DuplicateIdentityError() from e
+    await session.refresh(lead)
+    return lead
 
 
 async def delete_lead(session: AsyncSession, user_id: int, lead_id: int) -> bool:

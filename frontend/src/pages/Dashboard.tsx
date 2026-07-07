@@ -21,6 +21,7 @@ import {
   getSummary,
 } from "../api/dashboard";
 import FollowUpDrafter from "../components/FollowUpDrafter";
+import { DateRangeSelect } from "../components/DateRangeSelect";
 
 const SENTIMENT_COLORS: Record<string, string> = {
   positive: "#059669",
@@ -53,12 +54,13 @@ function dateLabel(iso: string): string {
 }
 
 export default function Dashboard() {
+  const [days, setDays] = useState(30);
   const [drafting, setDrafting] = useState<null | {
     id: number; email: string | null; name: string | null; company: string | null; title: string | null;
   }>(null);
-  const { data: summary } = useQuery({ queryKey: ["dash-summary"], queryFn: () => getSummary(30), refetchInterval: 60_000 });
-  const { data: timeseries } = useQuery({ queryKey: ["dash-sentiment"], queryFn: () => getSentimentTimeseries(30, "day") });
-  const { data: sequences } = useQuery({ queryKey: ["dash-sequences"], queryFn: () => getSequenceStats(30) });
+  const { data: summary } = useQuery({ queryKey: ["dash-summary", days], queryFn: () => getSummary(days), refetchInterval: 60_000 });
+  const { data: timeseries } = useQuery({ queryKey: ["dash-sentiment", days], queryFn: () => getSentimentTimeseries(days, days > 90 ? "week" : "day") });
+  const { data: sequences } = useQuery({ queryKey: ["dash-sequences", days], queryFn: () => getSequenceStats(days) });
   const { data: hotLeads } = useQuery({ queryKey: ["dash-hot"], queryFn: () => getHotLeads(7, 10) });
   const { data: atRisk } = useQuery({ queryKey: ["dash-at-risk"], queryFn: () => getAtRisk(24, 10) });
 
@@ -81,7 +83,7 @@ export default function Dashboard() {
           <h2 className="page-title">Dashboard</h2>
           <p className="text-sm text-slate-500 mt-1">Pipeline health across email + LinkedIn outreach.</p>
         </div>
-        {summary && <div className="badge-slate">Last {summary.period_days} days</div>}
+        <DateRangeSelect value={days} onChange={setDays} />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
@@ -95,9 +97,9 @@ export default function Dashboard() {
 
       <div className="grid md:grid-cols-2 gap-4">
         <section className="card card-pad">
-          <h3 className="font-semibold text-slate-900 mb-4">Funnel — last 30d</h3>
+          <h3 className="font-semibold text-slate-900 mb-4">Funnel — {days === 0 ? "all time" : `last ${days}d`}</h3>
           {funnel.every(f => f.value === 0) ? (
-            <p className="text-sm text-slate-500">No outreach activity in the last 30 days.</p>
+            <p className="text-sm text-slate-500">No outreach activity in this period.</p>
           ) : (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={funnel} layout="vertical" margin={{ left: 10, right: 30 }}>
@@ -114,7 +116,7 @@ export default function Dashboard() {
         </section>
 
         <section className="card card-pad">
-          <h3 className="font-semibold text-slate-900 mb-4">Reply sentiment — last 30d</h3>
+          <h3 className="font-semibold text-slate-900 mb-4">Reply sentiment — {days === 0 ? "all time" : `last ${days}d`}</h3>
           {chartData.length === 0 ? (
             <p className="text-sm text-slate-500">No classified replies yet. Once replies come in they'll appear here, color-coded by sentiment label.</p>
           ) : (

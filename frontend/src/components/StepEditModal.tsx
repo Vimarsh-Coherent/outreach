@@ -15,10 +15,13 @@ const CHANNEL_BODY_CAP: Record<StepChannel, number> = {
   email: 16000,
   linkedin_dm: 8000,
   linkedin_connect: 300,
+  linkedin_like: 0,
   call: 4000,
   sms: 1600,
   whatsapp: 4000,
 };
+
+const NO_BODY_CHANNELS: StepChannel[] = ["linkedin_like"];
 
 interface Props {
   sequenceId: number;
@@ -60,7 +63,7 @@ export default function StepEditModal({
     mutationFn: async () => {
       const payload: StepCreate = {
         channel,
-        body,
+        body: NO_BODY_CHANNELS.includes(channel) ? "" : body,
         delay_days: delayDays,
         delay_hours: delayHours,
         subject: channel === "email" ? subject : null,
@@ -99,7 +102,7 @@ export default function StepEditModal({
   const bodyCap = CHANNEL_BODY_CAP[channel];
   const bodyOver = body.length > bodyCap;
   const canSave =
-    body.trim().length > 0 &&
+    (NO_BODY_CHANNELS.includes(channel) || body.trim().length > 0) &&
     !bodyOver &&
     (channel !== "email" || subject.trim().length > 0);
   const showRegenerate = Boolean(step.config?.ai_generated || aiKnowledgeId);
@@ -150,6 +153,7 @@ export default function StepEditModal({
               <option value="email">Email</option>
               <option value="linkedin_dm">LinkedIn DM</option>
               <option value="linkedin_connect">LinkedIn connect (note)</option>
+              <option value="linkedin_like">LinkedIn like (post)</option>
               <option value="call">Call task</option>
               <option value="sms">SMS</option>
               <option value="whatsapp">WhatsApp</option>
@@ -193,20 +197,36 @@ export default function StepEditModal({
             </label>
           )}
 
-          <label className="block">
-            <span className="block text-slate-600 mb-1">
-              Body
-              <span className={`ml-2 text-xs ${bodyOver ? "text-rose-600" : "text-slate-400"}`}>
-                {body.length}/{bodyCap}
+          {NO_BODY_CHANNELS.includes(channel) ? (
+            <p className="text-xs text-slate-500 bg-slate-50 border rounded p-2">
+              No message needed — this step likes the lead's most recent LinkedIn post via
+              the Chrome extension.
+            </p>
+          ) : (
+            <label className="block">
+              <span className="block text-slate-600 mb-1">
+                Body
+                <span className={`ml-2 text-xs ${bodyOver ? "text-rose-600" : "text-slate-400"}`}>
+                  {body.length}/{bodyCap}
+                </span>
               </span>
-            </span>
-            <textarea
-              value={body}
-              onChange={e => setBody(e.target.value)}
-              rows={8}
-              className={`w-full border rounded px-2 py-1.5 font-mono text-xs ${bodyOver ? "border-rose-400" : ""}`}
-            />
-          </label>
+              <textarea
+                value={body}
+                onChange={e => setBody(e.target.value)}
+                rows={8}
+                className={`w-full border rounded px-2 py-1.5 font-mono text-xs ${bodyOver ? "border-rose-400" : ""}`}
+              />
+              <div className="text-slate-400 mt-1 text-xs">
+                Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{last_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{title}}"}</code> <code className="bg-slate-100 px-1">{"{{sender_name}}"}</code> <code className="bg-slate-100 px-1">{"{{meeting_link}}"}</code>
+                {channel === "email" && step.step_order === 1 && (
+                  <span className="block mt-1 text-amber-700">First email: {"{{meeting_link}}"} is stripped at send time — save it for step 2+.</span>
+                )}
+                {channel === "email" && step.step_order >= 2 && (
+                  <span className="block mt-1 text-slate-500">Follow-up emails may include {"{{meeting_link}}"} to book a call.</span>
+                )}
+              </div>
+            </label>
+          )}
         </div>
 
         <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-2 border-t bg-slate-50 px-4 py-3">

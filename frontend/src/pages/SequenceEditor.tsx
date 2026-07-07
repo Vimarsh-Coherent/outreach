@@ -19,6 +19,7 @@ const CHANNEL_LABEL: Record<StepChannel, string> = {
   email: "Email",
   linkedin_dm: "LinkedIn DM",
   linkedin_connect: "LinkedIn Connect (note)",
+  linkedin_like: "LinkedIn Post Like",
   call: "Call (task)",
   sms: "SMS (task)",
   whatsapp: "WhatsApp (task)",
@@ -28,10 +29,13 @@ const CHANNEL_BODY_CAP: Record<StepChannel, number> = {
   email: 16000,
   linkedin_dm: 8000,
   linkedin_connect: 300,
+  linkedin_like: 0,
   call: 4000,
   sms: 1600,
   whatsapp: 4000,
 };
+
+const NO_BODY_CHANNELS: StepChannel[] = ["linkedin_like"];
 
 const VERDICT_STYLE: Record<string, { chip: string; label: string }> = {
   grounded: { chip: "bg-emerald-100 text-emerald-800", label: "grounded" },
@@ -79,7 +83,8 @@ export default function SequenceEditor() {
   const addMut = useMutation({
     mutationFn: async () => {
       const payload: StepCreate = {
-        channel, body, delay_days: delayDays, delay_hours: delayHours,
+        channel, body: NO_BODY_CHANNELS.includes(channel) ? "" : body,
+        delay_days: delayDays, delay_hours: delayHours,
         subject: channel === "email" ? subject : null,
       };
       return addStep(sequenceId, payload);
@@ -114,7 +119,7 @@ export default function SequenceEditor() {
     mutationFn: async (s: StepOut) => {
       const payload: StepCreate = {
         channel: s.channel,
-        body: editBody,
+        body: NO_BODY_CHANNELS.includes(s.channel) ? "" : editBody,
         delay_days: editDelayDays,
         delay_hours: editDelayHours,
         subject: s.channel === "email" ? editSubject : null,
@@ -232,7 +237,8 @@ export default function SequenceEditor() {
               const editCap = CHANNEL_BODY_CAP[s.channel as StepChannel];
               const editOver = editBody.length > editCap;
               const editInvalid =
-                !editBody.trim() || editOver || (s.channel === "email" && !editSubject.trim());
+                (!NO_BODY_CHANNELS.includes(s.channel) && !editBody.trim()) || editOver ||
+                (s.channel === "email" && !editSubject.trim());
               return (
               <li key={s.id} className="border rounded p-3 bg-slate-50">
                 <div className="flex items-center justify-between mb-1">
@@ -281,13 +287,19 @@ export default function SequenceEditor() {
                         <input value={editSubject} onChange={e => setEditSubject(e.target.value)} maxLength={250} className="w-full border rounded px-2 py-1" />
                       </label>
                     )}
-                    <label className="block text-xs">
-                      <span className="block text-slate-500 mb-1">
-                        Body <span className={`ml-1 ${editOver ? "text-rose-600" : "text-slate-400"}`}>{editBody.length}/{editCap}</span>
-                      </span>
-                      <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={8} className={`w-full border rounded px-2 py-1 font-mono ${editOver ? "border-rose-400" : ""}`} />
-                      <div className="text-slate-400 mt-1">Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{sender_name}}"}</code></div>
-                    </label>
+                    {NO_BODY_CHANNELS.includes(s.channel) ? (
+                      <p className="text-xs text-slate-500 bg-slate-50 border rounded p-2">
+                        No message needed — likes the lead's most recent LinkedIn post via the extension.
+                      </p>
+                    ) : (
+                      <label className="block text-xs">
+                        <span className="block text-slate-500 mb-1">
+                          Body <span className={`ml-1 ${editOver ? "text-rose-600" : "text-slate-400"}`}>{editBody.length}/{editCap}</span>
+                        </span>
+                        <textarea value={editBody} onChange={e => setEditBody(e.target.value)} rows={8} className={`w-full border rounded px-2 py-1 font-mono ${editOver ? "border-rose-400" : ""}`} />
+                        <div className="text-slate-400 mt-1">Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{sender_name}}"}</code> <code className="bg-slate-100 px-1">{"{{meeting_link}}"}</code></div>
+                      </label>
+                    )}
                     <div className="flex gap-2">
                       <button
                         disabled={editInvalid || updateStepMut.isPending}
@@ -302,7 +314,7 @@ export default function SequenceEditor() {
                 ) : (
                   <>
                     {s.subject && <div className="text-xs text-slate-700 mt-1"><span className="text-slate-400">Subject:</span> {s.subject}</div>}
-                    <pre className="text-xs whitespace-pre-wrap mt-1 text-slate-700">{s.body}</pre>
+                    {s.body && <pre className="text-xs whitespace-pre-wrap mt-1 text-slate-700">{s.body}</pre>}
                   </>
                 )}
               </li>
@@ -319,6 +331,8 @@ export default function SequenceEditor() {
                 <option value="email">Email</option>
                 <option value="linkedin_dm">LinkedIn DM</option>
                 <option value="linkedin_connect">LinkedIn connect (note)</option>
+                <option value="linkedin_like">LinkedIn like (post)</option>
+                <option value="whatsapp">WhatsApp DM</option>
               </select>
             </label>
             <label className="col-span-4"><span className="block text-slate-600 mb-1">Delay days</span>
@@ -332,17 +346,23 @@ export default function SequenceEditor() {
                 <input value={subject} onChange={e => setSubject(e.target.value)} maxLength={250} className="w-full border rounded px-2 py-1.5" placeholder="Quick follow-up on {{company}}" />
               </label>
             )}
-            <label className="col-span-12">
-              <span className="block text-slate-600 mb-1">
-                Body
-                <span className={`ml-2 text-xs ${bodyOver ? "text-rose-600" : "text-slate-400"}`}>{body.length}/{bodyCap}</span>
-              </span>
-              <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} className={`w-full border rounded px-2 py-1.5 font-mono text-xs ${bodyOver ? "border-rose-400" : ""}`} placeholder="Hi {{first_name}}, ..." />
-              <div className="text-xs text-slate-500 mt-1">Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{last_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{title}}"}</code> <code className="bg-slate-100 px-1">{"{{email}}"}</code></div>
-            </label>
+            {NO_BODY_CHANNELS.includes(channel) ? (
+              <p className="col-span-12 text-xs text-slate-500 bg-slate-50 border rounded p-2">
+                No message needed — likes the lead's most recent LinkedIn post via the extension.
+              </p>
+            ) : (
+              <label className="col-span-12">
+                <span className="block text-slate-600 mb-1">
+                  Body
+                  <span className={`ml-2 text-xs ${bodyOver ? "text-rose-600" : "text-slate-400"}`}>{body.length}/{bodyCap}</span>
+                </span>
+                <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} className={`w-full border rounded px-2 py-1.5 font-mono text-xs ${bodyOver ? "border-rose-400" : ""}`} placeholder="Hi {{first_name}}, ..." />
+                <div className="text-xs text-slate-500 mt-1">Tokens: <code className="bg-slate-100 px-1">{"{{first_name}}"}</code> <code className="bg-slate-100 px-1">{"{{last_name}}"}</code> <code className="bg-slate-100 px-1">{"{{company}}"}</code> <code className="bg-slate-100 px-1">{"{{title}}"}</code> <code className="bg-slate-100 px-1">{"{{email}}"}</code> <code className="bg-slate-100 px-1">{"{{meeting_link}}"}</code></div>
+              </label>
+            )}
           </div>
           <button
-            disabled={addMut.isPending || !body.trim() || bodyOver || (channel === "email" && !subject.trim())}
+            disabled={addMut.isPending || (!NO_BODY_CHANNELS.includes(channel) && !body.trim()) || bodyOver || (channel === "email" && !subject.trim())}
             onClick={() => addMut.mutate()}
             className="border rounded px-4 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 disabled:bg-slate-300"
           >

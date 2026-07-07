@@ -87,6 +87,7 @@ class Settings(BaseSettings):
 
     li_daily_cap_connect: int = 20
     li_daily_cap_dm: int = 50  # bumped from 25 for testing (rolling 24h window)
+    li_daily_cap_like: int = 40
     email_daily_cap: int = 200
 
     # Connect → wait-for-acceptance → DM gate: how long to wait for a sent

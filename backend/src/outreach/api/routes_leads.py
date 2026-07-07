@@ -8,6 +8,7 @@ from outreach.schemas.leads import (
     LeadCreate,
     LeadListResponse,
     LeadOut,
+    LeadUpdate,
     UploadCommitRequest,
     UploadCommitResponse,
     UploadPreviewResponse,
@@ -80,11 +81,11 @@ async def list_leads(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> LeadListResponse:
-    items, total = await leads_service.list_leads(
+    items, total = await leads_service.list_leads_enriched(
         session, user.id, search=search, limit=limit, offset=offset
     )
     return LeadListResponse(
-        items=[LeadOut.model_validate(i, from_attributes=True) for i in items],
+        items=[LeadOut.model_validate(i) for i in items],
         total=total, limit=limit, offset=offset,
     )
 
@@ -113,6 +114,26 @@ async def create_lead(
     if not items:
         raise HTTPException(500, "upsert succeeded but lookup failed")
     return LeadOut.model_validate(items[0], from_attributes=True)
+
+
+@router.patch("/{lead_id}", response_model=LeadOut)
+async def update_lead(
+    lead_id: int,
+    dto: LeadUpdate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> LeadOut:
+    try:
+        lead = await leads_service.update_lead(
+            session, user.id, lead_id, dto.model_dump(exclude_unset=True)
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except leads_service.DuplicateIdentityError as e:
+        raise HTTPException(409, "another lead already has this email/phone/LinkedIn URL") from e
+    if lead is None:
+        raise HTTPException(404, "lead not found")
+    return LeadOut.model_validate(lead, from_attributes=True)
 
 
 @router.delete("/{lead_id}", status_code=204)

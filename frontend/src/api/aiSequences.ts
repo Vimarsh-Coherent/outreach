@@ -5,6 +5,7 @@ export type AIStepChannel =
   | "email"
   | "linkedin_dm"
   | "linkedin_connect"
+  | "linkedin_like"
   | "call"
   | "sms"
   | "whatsapp";

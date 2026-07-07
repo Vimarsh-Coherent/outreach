@@ -25,11 +25,14 @@ from outreach.models.sequence import Sequence
 from outreach.models.step import SequenceStep
 from outreach.models.step_run import StepRun
 from outreach.services import llm_client, vault
-from outreach.services.template_render import render
+from outreach.services.template_render import build_render_snapshot, render
 
 log = logging.getLogger("outreach.followup")
 
 DEFAULT_MODEL = "claude-haiku-4-5"
+
+POSITIVE_SENTIMENTS = frozenset({"positive", "interested"})
+NEGATIVE_SENTIMENTS = frozenset({"negative", "objection", "unsubscribe"})
 
 SYSTEM_PROMPT = (
     "You are a senior sales-development writer drafting personalised follow-up "
@@ -63,6 +66,7 @@ INSTRUCTIONS:
 - If the lead has already replied with an objection, address it directly.
 - If the lead is interested, propose a specific next step (a 15-min call,
   sending a doc, etc.) instead of vague language.
+{meeting_link_instruction}
 - Do NOT repeat lines verbatim from earlier sends.
 - Keep the original signature style.
 
@@ -137,6 +141,69 @@ async def _load_prior_history(session: AsyncSession, lead_id: int, n: int = 5) -
     return [s for _, s in items[-n:]], len(items)
 
 
+async def _get_latest_reply_sentiment(session: AsyncSession, lead_id: int) -> str | None:
+    """Most recent classified inbound-reply sentiment for this lead, if any."""
+    from outreach.models.enrolment import Enrolment
+
+    enrol_ids = list((await session.execute(
+        select(Enrolment.id).where(Enrolment.lead_id == lead_id)
+    )).scalars().all())
+    if not enrol_ids:
+        return None
+
+    row = (await session.execute(
+        select(ReplySentiment.label)
+        .join(Event, Event.id == ReplySentiment.event_id)
+        .where(
+            Event.enrolment_id.in_(enrol_ids),
+            Event.event_type.in_(("reply", "auto_reply")),
+        )
+        .order_by(desc(Event.occurred_at))
+        .limit(1)
+    )).scalar_one_or_none()
+    return row
+
+
+async def resolve_include_meeting_link(
+    session: AsyncSession,
+    lead_id: int,
+    *,
+    step_order: int | None = None,
+) -> tuple[bool, str | None]:
+    """Whether an AI follow-up should include the scheduling link.
+
+    - positive / interested reply  -> include link
+    - negative / objection / unsubscribe -> no link
+    - no reply yet on step 2+ cadence -> include link (scheduled follow-up)
+    - neutral / auto_reply / other -> no link
+    """
+    sentiment = await _get_latest_reply_sentiment(session, lead_id)
+    if sentiment in POSITIVE_SENTIMENTS:
+        return True, sentiment
+    if sentiment in NEGATIVE_SENTIMENTS:
+        return False, sentiment
+    if sentiment is None and step_order is not None and step_order >= 2:
+        return True, None
+    return False, sentiment
+
+
+def _meeting_link_instruction(*, include: bool, link: str, sentiment: str | None) -> str:
+    if include and link:
+        return (
+            f"- The lead's reply sentiment is positive. Include this scheduling link "
+            f"when proposing a call or meeting: {link}"
+        )
+    if sentiment in NEGATIVE_SENTIMENTS:
+        return (
+            "- The lead replied negatively or raised an objection. Do NOT include any "
+            "scheduling or calendar booking link. Write a respectful follow-up without "
+            "pushing for a meeting."
+        )
+    return (
+        "- Do NOT include any scheduling or calendar booking link in this email."
+    )
+
+
 async def draft_for_lead(
     session: AsyncSession,
     lead_id: int,
@@ -144,6 +211,7 @@ async def draft_for_lead(
     template_subject: str,
     template_body: str,
     contact_snapshot: dict | None = None,
+    include_meeting_link: bool = True,
     model: str = DEFAULT_MODEL,
 ) -> FollowUpDraft:
     lead = await session.scalar(select(Lead).where(Lead.id == lead_id))
@@ -154,8 +222,16 @@ async def draft_for_lead(
         "email": lead.email, "first_name": lead.first_name,
         "last_name": lead.last_name, "company": lead.company, "title": lead.title,
     }
+    meeting_link = str(snap.get("meeting_link") or "")
+    snap = build_render_snapshot(
+        snap,
+        sender_name=str(snap.get("sender_name") or ""),
+        meeting_link=meeting_link,
+        include_meeting_link=include_meeting_link,
+    )
 
     prior_history, prior_count = await _load_prior_history(session, lead_id, n=5)
+    latest_sentiment = await _get_latest_reply_sentiment(session, lead_id)
 
     # Build a retrieval query: pick a hot signal from history if possible.
     query = ""
@@ -182,6 +258,11 @@ async def draft_for_lead(
         vault_snippets="\n".join(f"  - {s[:400]}" for s in similar) or "  (no similar context yet)",
         template_subject=rendered_template_subject,
         template_body=rendered_template_body,
+        meeting_link_instruction=_meeting_link_instruction(
+            include=include_meeting_link,
+            link=meeting_link,
+            sentiment=latest_sentiment,
+        ),
     )
 
     if llm_client.active_provider() is None:
