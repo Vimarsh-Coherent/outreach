@@ -99,6 +99,27 @@ async def process(session: AsyncSession, parsed: ParsedInbound) -> dict:
         )
         return {"kind": parsed.kind, "action": "ignored", "reason": "stale_reply"}
 
+    # Account-wide dedup by inbound Message-ID. The partial unique index below is
+    # scoped to (enrolment_id, event_type, external_id), so it only stops re-inserts
+    # under the SAME enrolment. But the Gmail sender-fallback matches a reply to the
+    # *latest* sent step_run for the lead, which drifts as more mail goes out — so a
+    # later poll can re-match the same message to a DIFFERENT enrolment and slip past
+    # the per-enrolment index. One inbound email must yield exactly one reply event.
+    if parsed.inbound_message_id and parsed.kind in ("reply", "auto_reply"):
+        dup = await session.scalar(
+            select(Event.id)
+            .join(Enrolment, Enrolment.id == Event.enrolment_id)
+            .where(
+                Enrolment.user_id == enrolment.user_id,
+                Event.event_type == parsed.kind,
+                Event.external_id == parsed.inbound_message_id,
+            )
+            .limit(1)
+        )
+        if dup is not None:
+            log.info("dedup reply: msg-id %s already recorded for this account", parsed.inbound_message_id)
+            return {"kind": parsed.kind, "action": "duplicate_event"}
+
     # Insert the event. The partial unique index on (enrolment_id, event_type, external_id)
     # WHERE external_id IS NOT NULL drops duplicates from re-fetched IMAP messages.
     event = Event(
