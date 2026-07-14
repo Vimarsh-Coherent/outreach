@@ -29,6 +29,7 @@ const CHANNEL_META: Record<string, { label: string; color: string }> = {
   email:            { label: "Email",      color: "bg-blue-50 text-blue-700 border-blue-200" },
   linkedin_dm:      { label: "LinkedIn",   color: "bg-sky-50 text-sky-700 border-sky-200" },
   linkedin_connect: { label: "LinkedIn",   color: "bg-sky-50 text-sky-700 border-sky-200" },
+  linkedin_like:    { label: "LinkedIn",   color: "bg-sky-50 text-sky-700 border-sky-200" },
   linkedin:         { label: "LinkedIn",   color: "bg-sky-50 text-sky-700 border-sky-200" },
   whatsapp:         { label: "WhatsApp",   color: "bg-green-50 text-green-700 border-green-200" },
 };

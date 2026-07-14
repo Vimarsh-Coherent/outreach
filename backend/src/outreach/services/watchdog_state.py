@@ -27,7 +27,7 @@ TierName = Literal[
     "extension_failure",
     "selector_heal",
 ]
-EventStatus = Literal["healthy", "issue", "emergency", "healed"]
+EventStatus = Literal["healthy", "issue", "emergency", "healed", "pattern_change"]
 
 
 @dataclass(slots=True)

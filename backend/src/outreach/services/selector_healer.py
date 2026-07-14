@@ -244,3 +244,73 @@ async def log_heal_in_db(
         await session.commit()
     except Exception as e:  # noqa: BLE001
         log.warning("failed to log heal: %s", e)
+
+
+async def upsert_current_selectors(
+    session: AsyncSession, channel_id: int, intent: str, selectors: list[str], source: str,
+) -> int | None:
+    """Persist the latest healed selectors as the channel's CURRENT registry entry
+    for this intent — as opposed to `selector_heals` above, which is an
+    append-only audit log. This is what closes the loop: a heal that happens
+    server-side (the watchdog's preemptive Tier-3 pass, which has no browser
+    tab to talk to) still ends up somewhere the extension can fetch it from on
+    its next poll, via `get_current_selectors` / GET /current-selectors.
+
+    `heal_count` increments on every re-heal of the same (channel, intent).
+    Repeated heals of the same intent are the actual "LinkedIn changed its
+    pattern again" signal — a one-off heal is just normal drift, but 2+ in a
+    short window means the DOM structure keeps moving. Returns the new
+    heal_count (None on failure) so callers can decide whether to flag it.
+    """
+    if not selectors:
+        return None
+    try:
+        await session.execute(text(
+            "CREATE TABLE IF NOT EXISTS outreach.li_selector_registry ("
+            " id BIGSERIAL PRIMARY KEY,"
+            " channel_id INT NOT NULL,"
+            " intent VARCHAR(60) NOT NULL,"
+            " selectors JSONB NOT NULL,"
+            " source VARCHAR(20) NOT NULL DEFAULT 'reactive',"
+            " heal_count INT NOT NULL DEFAULT 1,"
+            " updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            " UNIQUE (channel_id, intent)"
+            ")"
+        ))
+        row = (await session.execute(text(
+            "INSERT INTO outreach.li_selector_registry (channel_id, intent, selectors, source) "
+            "VALUES (:cid, :intent, CAST(:sel AS jsonb), :source) "
+            "ON CONFLICT (channel_id, intent) DO UPDATE SET "
+            "  selectors = EXCLUDED.selectors, source = EXCLUDED.source, "
+            "  heal_count = outreach.li_selector_registry.heal_count + 1, "
+            "  updated_at = NOW() "
+            "RETURNING heal_count"
+        ), {"cid": channel_id, "intent": intent, "sel": json.dumps(selectors), "source": source})).first()
+        await session.commit()
+        return int(row[0]) if row else None
+    except Exception as e:  # noqa: BLE001
+        log.warning("failed to upsert current selector registry (channel=%s intent=%s): %s", channel_id, intent, e)
+        return None
+
+
+async def get_current_selectors(session: AsyncSession, channel_id: int) -> dict:
+    """Server-persisted 'current best selectors' for this channel, keyed by intent.
+    Polled by the extension (GET /api/extension/current-selectors) so a
+    watchdog-triggered preemptive heal — which has no browser tab to push
+    into directly — still reaches the browser within one poll cycle."""
+    try:
+        rows = (await session.execute(text(
+            "SELECT intent, selectors, source, heal_count, updated_at "
+            "FROM outreach.li_selector_registry WHERE channel_id = :cid"
+        ), {"cid": channel_id})).all()
+    except Exception:  # noqa: BLE001
+        return {}
+    return {
+        r.intent: {
+            "selectors": r.selectors,
+            "source": r.source,
+            "heal_count": r.heal_count,
+            "updated_at": r.updated_at.isoformat(),
+        }
+        for r in rows
+    }

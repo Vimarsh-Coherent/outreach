@@ -21,6 +21,7 @@ from outreach.api import (
     routes_timeline,
     routes_tools,
     routes_tracking,
+    routes_users,
     routes_watchdog,
     routes_webhooks,
     routes_whatsapp,
@@ -82,3 +83,4 @@ app.include_router(routes_api_keys.router)
 app.include_router(routes_public.router)
 app.include_router(routes_crm.router)
 app.include_router(routes_analytics.router)
+app.include_router(routes_users.router)

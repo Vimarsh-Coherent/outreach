@@ -38,6 +38,11 @@ SYSTEM_PROMPT = (
     "sequences that are concise, human, and conversion-focused. Follow the user's "
     "instructions exactly for step order, channels, and delays. Use merge tokens "
     "{{first_name}}, {{last_name}}, {{company}}, {{title}} in email/LinkedIn bodies. "
+    "{{meeting_link}} is the sender's scheduling URL (Calendly/Cal.com/etc). "
+    "Never put {{meeting_link}} in the first email step — use it from the second "
+    "email onward when the step's goal is booking a meeting. AI follow-ups include "
+    "the link only when reply sentiment is positive; negative replies get a normal "
+    "follow-up without a calendar link. "
     "Never use em-dashes. Return JSON only."
 )
 
@@ -264,6 +269,7 @@ async def _add_step_from_draft(
         EmailStepCreate,
         LinkedInConnectStepCreate,
         LinkedInDmStepCreate,
+        LinkedInLikeStepCreate,
         ManualTaskStepCreate,
     )
 
@@ -286,6 +292,9 @@ async def _add_step_from_draft(
         dto = LinkedInConnectStepCreate(
             channel="linkedin_connect", subject=None, body=step.body, **common
         )
+    elif step.channel == "linkedin_like":
+        # No message content — body must be empty per LinkedInLikeStepCreate.
+        dto = LinkedInLikeStepCreate(channel="linkedin_like", subject=None, body="", **common)
     else:
         dto = ManualTaskStepCreate(
             channel=step.channel,  # type: ignore[arg-type]

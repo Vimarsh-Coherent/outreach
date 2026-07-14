@@ -17,7 +17,7 @@
 // Build marker — printed every time the service worker boots. If you do NOT see
 // this exact line in the service-worker console, Chrome is running a stale,
 // cached worker and the fixes below are NOT active.
-const COHERENT_BUILD = "2026-06-16-reloadclean-v33b";
+const COHERENT_BUILD = "2026-07-03-selectorsync-v34";
 console.log(`[coherent] background.js loaded — build ${COHERENT_BUILD}`);
 
 const POLL_ALARM = "coherent-poll";       // responsive command drain (30s)
@@ -55,6 +55,63 @@ async function api(path, init = {}) {
 async function heartbeat() {
   try { await api("/api/extension/heartbeat", { method: "GET" }); }
   catch (e) { console.warn("[coherent] heartbeat failed", e); }
+}
+
+// Pull server-persisted selector overrides — populated both by the extension's
+// own reactive heals (via requestHeal below) AND by the backend watchdog's
+// preemptive Tier-3 heals, which have no browser tab to push into directly.
+// Without this poll, a preemptive heal just sits in the DB forever: nothing
+// ever told this browser about it. `selectorSyncMeta` remembers the
+// `updated_at` we last applied per intent so we only touch storage/tabs when
+// something actually changed, not on every 30s tick.
+async function syncSelectorRegistry() {
+  try {
+    const serverRegistry = await api("/api/extension/current-selectors");
+    if (!serverRegistry || typeof serverRegistry !== "object") return;
+    const entries = Object.entries(serverRegistry);
+    if (!entries.length) return;
+
+    const { selectorRegistry, selectorSyncMeta } = await chrome.storage.local.get([
+      "selectorRegistry", "selectorSyncMeta",
+    ]);
+    const localRegistry = selectorRegistry || {};
+    const meta = selectorSyncMeta || {};
+    const changed = [];
+
+    for (const [intent, entry] of entries) {
+      if (!entry || !Array.isArray(entry.selectors) || entry.selectors.length === 0) continue;
+      if (meta[intent] === entry.updated_at) continue; // already applied this version
+      localRegistry[intent] = {
+        primary: entry.selectors[0],
+        fallback: entry.selectors[1] || null,
+        failCount: 0,
+      };
+      meta[intent] = entry.updated_at;
+      changed.push({ intent, entry });
+    }
+    if (!changed.length) return;
+
+    // Persist to storage FIRST so any tab injected after this point (even if
+    // no LinkedIn tab is open right now) loads the corrected registry via its
+    // own loadRegistry() on next injection.
+    await chrome.storage.local.set({ selectorRegistry: localRegistry, selectorSyncMeta: meta });
+
+    const tabs = await getLinkedInTabs();
+    for (const { intent, entry } of changed) {
+      console.log(
+        `[coherent] selector auto-rebuilt from watchdog: ${intent} (${entry.source}, heal #${entry.heal_count})`,
+      );
+      for (const tab of tabs) {
+        try {
+          await chrome.tabs.sendMessage(tab.id, {
+            kind: "apply-heal", intent, selectors: entry.selectors,
+          });
+        } catch (_) { /* no content script listening yet — storage write above covers it */ }
+      }
+    }
+  } catch (e) {
+    console.warn("[coherent] selector registry sync failed", e);
+  }
 }
 
 async function getLinkedInTabs() {
@@ -241,6 +298,7 @@ async function dispatchNote(message, extra = {}) {
 
 async function pollOnce() {
   await heartbeat();
+  await syncSelectorRegistry();
   // Defense in depth against off-hours sends: the backend schedules into the
   // sequence send window, but watchdog retries used to re-pend commands at any
   // hour (observed: a DM executed at 02:55). Never EXECUTE commands outside

@@ -33,6 +33,13 @@ class LinkedInConnectStepCreate(_StepBase):
     body: str = Field(min_length=1, max_length=300)
 
 
+class LinkedInLikeStepCreate(_StepBase):
+    # Likes the lead's most recent LinkedIn post — no message content.
+    channel: Literal["linkedin_like"]
+    subject: None = None
+    body: str = Field(default="", max_length=0)
+
+
 class WhatsAppStepCreate(_StepBase):
     # First-class automated channel (sent via the Baileys sidecar), no subject.
     channel: Literal["whatsapp"]

@@ -44,6 +44,8 @@ const CHANNEL_BODY_CAP: Record<StepChannel, number> = {
   whatsapp: 4000,
 };
 
+const NO_BODY_CHANNELS: StepChannel[] = ["linkedin_like"];
+
 const VERDICT_STYLE: Record<string, { chip: string; label: string }> = {
   grounded: { chip: "bg-emerald-100 text-emerald-800", label: "grounded" },
   weak: { chip: "bg-amber-100 text-amber-800", label: "weak" },

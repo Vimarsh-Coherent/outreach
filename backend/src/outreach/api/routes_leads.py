@@ -8,6 +8,7 @@ from outreach.schemas.leads import (
     LeadCreate,
     LeadListResponse,
     LeadOut,
+    LeadUpdate,
     UploadCommitRequest,
     UploadCommitResponse,
     UploadPreviewResponse,
@@ -118,14 +119,21 @@ async def create_lead(
 @router.patch("/{lead_id}", response_model=LeadOut)
 async def update_lead(
     lead_id: int,
-    dto: LeadCreate,
+    dto: LeadUpdate,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> LeadOut:
-    lead = await leads_service.update_lead(session, user.id, lead_id, dto)
+    try:
+        lead = await leads_service.update_lead(
+            session, user.id, lead_id, dto.model_dump(exclude_unset=True)
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except leads_service.DuplicateIdentityError as e:
+        raise HTTPException(409, "another lead already has this email/phone/LinkedIn URL") from e
     if lead is None:
         raise HTTPException(404, "lead not found")
-    return lead
+    return LeadOut.model_validate(lead, from_attributes=True)
 
 
 @router.delete("/{lead_id}", status_code=204)

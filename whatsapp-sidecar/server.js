@@ -46,6 +46,19 @@ const INBOUND_URL = process.env.WA_BACKEND_INBOUND_URL || "";
 
 const log = pino({ level: process.env.WA_LOG_LEVEL || "info" });
 
+// Baileys occasionally rejects an internal promise (e.g. a keep-alive ping)
+// with the raw WS close code when the socket drops abnormally (code 1006) —
+// that rejection is never attached to a .catch(), so by default Node treats
+// it as fatal and kills the whole sidecar even though connection.update's own
+// "closed — reconnecting" handler below is already recovering. Don't let a
+// stray rejection from a socket we're already replacing take the process down.
+process.on("unhandledRejection", (reason) => {
+  log.warn({ err: String(reason) }, "unhandled rejection — ignoring (reconnect already in flight)");
+});
+process.on("uncaughtException", (err) => {
+  log.error({ err: String(err) }, "uncaught exception — ignoring (reconnect already in flight)");
+});
+
 // ── connection state machine ────────────────────────────────────────────────
 // state: 'starting' | 'qr' | 'connected' | 'disconnected' | 'logged_out'
 let state = "starting";

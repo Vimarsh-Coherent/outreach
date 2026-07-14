@@ -22,6 +22,7 @@ import {
   testEmailChannel,
 } from "../api/channels";
 import PageHero from "../components/PageHero";
+import { getProfile, updateProfile } from "../api/users";
 
 const blankSmtp: SMTPConfig = {
   host: "",
@@ -54,6 +55,57 @@ function StepBadge({ result, label }: { result: { ok: boolean; detail: string; l
         <div className="text-slate-600 font-mono text-xs break-all">{result.detail}</div>
       </div>
     </div>
+  );
+}
+
+function MeetingLinkCard() {
+  const qc = useQueryClient();
+  const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
+  const [link, setLink] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (profile && !dirty) setLink(profile.meeting_link ?? "");
+  }, [profile, dirty]);
+
+  const saveMut = useMutation({
+    mutationFn: async () => updateProfile({ meeting_link: link.trim() || null }),
+    onSuccess: p => {
+      qc.setQueryData(["profile"], p);
+      setDirty(false);
+    },
+  });
+
+  return (
+    <section className="rounded border bg-white p-6 space-y-3">
+      <h3 className="font-semibold text-slate-800">Meeting link</h3>
+      <p className="text-sm text-slate-500">
+        Your Calendly / Cal.com / Google Calendar scheduling URL. Use <code className="bg-slate-100 px-1 rounded">{"{{meeting_link}}"}</code> in
+        step bodies from the <strong>second email onward</strong> — the first email never includes it. AI follow-ups add your calendar link
+        only when reply sentiment is <strong>positive</strong>; negative replies get a normal follow-up without a booking link.
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          value={link}
+          onChange={e => { setLink(e.target.value); setDirty(true); }}
+          placeholder="https://cal.com/your-name"
+          className="flex-1 border rounded px-3 py-1.5 text-sm font-mono"
+        />
+        <button
+          disabled={saveMut.isPending || !dirty}
+          onClick={() => saveMut.mutate()}
+          className="border rounded px-4 py-1.5 text-sm bg-sky-600 text-white hover:bg-sky-700 disabled:bg-slate-300"
+        >
+          {saveMut.isPending ? "Saving..." : "Save"}
+        </button>
+      </div>
+      {saveMut.isSuccess && !dirty && (
+        <div className="text-xs text-emerald-700">Saved — use {"{{meeting_link}}"} from the 2nd email step onward.</div>
+      )}
+      {saveMut.isError && (
+        <div className="text-xs text-rose-700">Failed to save. Try again.</div>
+      )}
+    </section>
   );
 }
 
@@ -420,6 +472,8 @@ export default function Channels() {
         title="Channels"
         subtitle="Connect any SMTP mailbox (Gmail, Outlook, Yahoo, Zoho, Microsoft 365, SendGrid/SES/Mailgun, or a custom server). IMAP is used to detect replies and bounces. Credentials are encrypted at rest (Fernet)."
       />
+
+      <MeetingLinkCard />
 
       <section className="card">
         <div className="card-head">

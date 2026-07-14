@@ -37,6 +37,7 @@
     composeEditor:        { primary: 'div.msg-form__contenteditable[contenteditable="true"]', fallback: 'div[role="textbox"][contenteditable="true"]', failCount: 0 },
     sendDmButton:         { primary: 'button.msg-form__send-button',                  fallback: 'button[aria-label^="Press enter to send"]', failCount: 0 },
     connectionCard:       { primary: '[componentkey] a[href*="/in/"]',                fallback: 'main a[href*="/in/"]',          failCount: 0 },
+    likeButton:           { primary: 'button.react-button__trigger[aria-label*="Like" i]', fallback: 'button[aria-label^="Like" i]', failCount: 0 },
   };
 
   let registry = JSON.parse(JSON.stringify(DEFAULT_REGISTRY));
@@ -1322,6 +1323,73 @@
     return { providerMessageId: `li-connect:${cmd.target_li_url}#${Date.now()}` };
   }
 
+  // ── Like: find the lead's most recent post and like it ──────────────────
+  // target_li_url is the lead's /in/<slug>/recent-activity/all/ feed — the
+  // dispatcher builds this URL (not the plain profile URL) for 'like'
+  // commands, and background.js navigates the tab there the same way it
+  // does for connect/dm, so by the time this runs we're already on it.
+  function findFirstPostContainer() {
+    const containers = deepQuerySelectorAll(
+      'div.feed-shared-update-v2, div[data-urn*="urn:li:activity"], div[data-urn*="urn:li:share"]',
+    );
+    return containers[0] || null;
+  }
+
+  function findLikeButtonIn(container) {
+    const inScope = (el) => !container || container.contains(el);
+    for (const sel of [registry.likeButton && registry.likeButton.primary, registry.likeButton && registry.likeButton.fallback]) {
+      if (!sel) continue;
+      const el = deepQuerySelectorAll(sel).find(inScope);
+      if (el) return el;
+    }
+    // Text/aria fallback — the reaction TRIGGER button, not the "N reactions" count link.
+    const candidates = deepQuerySelectorAll('button, [role="button"]').filter(inScope);
+    return candidates.find((b) => {
+      const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+      const text = (b.innerText || b.textContent || '').trim().toLowerCase();
+      return aria.startsWith('like') || aria.includes('react like') || text === 'like';
+    }) || null;
+  }
+
+  function isLikeButtonActive(btn) {
+    if (!btn) return false;
+    if (btn.getAttribute('aria-pressed') === 'true') return true;
+    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+    if (aria.includes('unlike') || aria.includes('remove like')) return true;
+    return /\bactive\b/.test(btn.className || '');
+  }
+
+  async function executeLike(cmd) {
+    await waitFor(() => document.querySelector('main'));
+    assertOnTargetProfile(cmd);
+    // Same identity guard as DM/connect — refuse to like a post if the
+    // rendered page isn't confirmed to be the target lead's.
+    await waitForTargetProfileDom(cmd);
+
+    const container = await waitFor(() => findFirstPostContainer(), 8000).catch(() => null);
+    if (!container) throw new Error('no_posts_to_like');
+
+    let likeBtn = findLikeButtonIn(container);
+    if (!likeBtn) likeBtn = await findResilient('likeButton');
+    if (!likeBtn) throw new Error('likeButton_not_found_even_after_heal');
+
+    if (isLikeButtonActive(likeBtn)) {
+      LOG('Most recent post already liked — treating as done.');
+      return { providerMessageId: `li-like:already-liked#${Date.now()}` };
+    }
+
+    likeBtn.click();
+    await sleep(500);
+
+    const liked = await waitFor(
+      () => isLikeButtonActive(findLikeButtonIn(container) || likeBtn),
+      4000,
+    ).catch(() => false);
+    if (!liked) throw new Error('like_click_had_no_effect');
+
+    return { providerMessageId: `li-like:${cmd.target_li_url}#${Date.now()}` };
+  }
+
   // ── Realtime self-heal wrapper ──────────────────────────────────────────
   // The user's UX expectation is: "if it fails, the watchdog fixes the scraper
   // in real time and resends". This wrapper implements that loop in the
@@ -1351,6 +1419,7 @@
     noteTextarea_not_found_even_after_heal: 'noteTextarea',
     sendInvitationButton_not_found_even_after_heal: 'sendInvitationButton',
     sendInvitationButton_disabled_note_didnt_register: 'noteTextarea',
+    likeButton_not_found_even_after_heal: 'likeButton',
   };
 
   function noteToWatchdog(tier, status, message, extra = {}) {

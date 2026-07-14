@@ -448,6 +448,9 @@ async def _advance_after_linkedin(
     elif finished_channel == "linkedin_dm":
         state["li_status"] = "dm_sent"
         state["li_status_at"] = now.isoformat()
+    elif finished_channel == "linkedin_like":
+        state["li_status"] = "post_liked"
+        state["li_status_at"] = now.isoformat()
 
     next_step = await session.scalar(
         select(SequenceStep).where(
@@ -463,29 +466,43 @@ async def _advance_after_linkedin(
         enrolment.runtime_state = state
         return
 
-    # Acceptance gate: after a connect, a following DM waits until the invite is
-    # accepted — UNLESS we're already a 1st-degree connection, in which case the
-    # DM is scheduled right away (no acceptance to wait for).
-    if finished_channel == "linkedin_connect" and next_step.channel == "linkedin_dm":
-        if already_connected:
-            state["awaiting_acceptance"] = False
-            enrolment.next_send_at = next_valid_slot(
-                base=now, delay_days=next_step.delay_days, delay_hours=next_step.delay_hours,
-                tz_name=seq.timezone, window_start=seq.send_window_start,
-                window_end=seq.send_window_end, days_mask=seq.send_days_mask,
-            )
-        else:
+    # Acceptance gate: after a connect, ANY later linkedin_dm step in this
+    # sequence — not just the one immediately next — must wait until the
+    # invite is accepted. Other channel steps (e.g. whatsapp) may run in
+    # between and are unaffected; the dispatcher enforces this gate itself
+    # when it actually reaches a linkedin_dm step_run, using this flag.
+    if finished_channel == "linkedin_connect":
+        future_dm = await session.scalar(
+            select(SequenceStep.id).where(
+                SequenceStep.sequence_id == enrolment.sequence_id,
+                SequenceStep.step_order > finished_step_order,
+                SequenceStep.channel == "linkedin_dm",
+            ).order_by(SequenceStep.step_order.asc()).limit(1)
+        )
+        if future_dm is not None and not already_connected:
             state["awaiting_acceptance"] = True
             state["awaiting_since"] = now.isoformat()
-            enrolment.next_send_at = now + timedelta(days=get_settings().li_accept_timeout_days)
-        enrolment.runtime_state = state
-        return
+        else:
+            state["awaiting_acceptance"] = False
 
-    enrolment.next_send_at = next_valid_slot(
-        base=now, delay_days=next_step.delay_days, delay_hours=next_step.delay_hours,
-        tz_name=seq.timezone, window_start=seq.send_window_start,
-        window_end=seq.send_window_end, days_mask=seq.send_days_mask,
-    )
+        # When the DM IS the immediate next step and still gated, park the
+        # enrolment for the full accept-timeout window rather than cycling
+        # the dispatcher every tick only to have it re-defer.
+        if next_step.channel == "linkedin_dm" and state["awaiting_acceptance"]:
+            enrolment.next_send_at = now + timedelta(days=get_settings().li_accept_timeout_days)
+            enrolment.runtime_state = state
+            return
+
+    if next_step.delay_days == 0 and next_step.delay_hours == 0:
+        # Zero-delay step: fire immediately, back-to-back — see matching
+        # comment in dispatcher._advance_enrolment.
+        enrolment.next_send_at = now
+    else:
+        enrolment.next_send_at = next_valid_slot(
+            base=now, delay_days=next_step.delay_days, delay_hours=next_step.delay_hours,
+            tz_name=seq.timezone, window_start=seq.send_window_start,
+            window_end=seq.send_window_end, days_mask=seq.send_days_mask,
+        )
     enrolment.runtime_state = state
 
 
@@ -509,7 +526,35 @@ async def heal_selector_endpoint(
         )
     except Exception:  # noqa: BLE001
         pass
+    if response.selectors:
+        heal_count = await selector_healer.upsert_current_selectors(
+            session, channel.id, req.intent, response.selectors, source="reactive",
+        )
+        # A single heal is normal drift. The SAME intent needing healing again
+        # is the actual "LinkedIn changed its pattern" signal — surface it
+        # distinctly instead of quietly logging one more routine heal.
+        if heal_count is not None and heal_count >= 2:
+            watchdog_state.log_event(
+                "stuck_state_sweep", "pattern_change",
+                f"LinkedIn UI pattern change detected for '{req.intent}' — healed "
+                f"{heal_count} times; latest selectors pushed to the extension registry",
+                intent=req.intent, heal_count=heal_count, source="reactive",
+            )
     return response
+
+
+@router.get("/current-selectors")
+async def current_selectors_endpoint(
+    channel: Channel = Depends(get_extension_channel),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Server-persisted selector overrides for this channel — populated by both
+    the extension's own reactive heals and the watchdog's preemptive Tier-3
+    heals. Polled alongside /next-command so a preemptive heal (which the
+    extension itself never triggered, and has no browser tab to push into
+    directly) still reaches this browser within one 30s poll cycle instead of
+    sitting unused until a fresh in-session failure."""
+    return await selector_healer.get_current_selectors(session, channel.id)
 
 
 @router.post("/watchdog-note", status_code=204)

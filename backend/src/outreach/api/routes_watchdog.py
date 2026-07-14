@@ -3,6 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from outreach.db import get_session
@@ -127,6 +128,43 @@ async def get_state(
         like_posts_today=st.like_posts_today,
         events=events,
     )
+
+
+class SelectorRegistryEntry(BaseModel):
+    channel_id: int
+    intent: str
+    selectors: list[str]
+    source: str
+    heal_count: int
+    updated_at: datetime
+
+
+@router.get("/selector-registry", response_model=list[SelectorRegistryEntry])
+async def get_selector_registry(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[SelectorRegistryEntry]:
+    """Current server-persisted 'best selectors' per LinkedIn intent, across this
+    user's channels — the durable record of what the watchdog / selector healer
+    has auto-rebuilt so far, and how many times each intent needed re-healing
+    (a repeat count is the actual 'LinkedIn changed pattern again' signal)."""
+    try:
+        rows = (await session.execute(text(
+            "SELECT r.channel_id, r.intent, r.selectors, r.source, r.heal_count, r.updated_at "
+            "FROM outreach.li_selector_registry r "
+            "JOIN outreach.channels c ON c.id = r.channel_id "
+            "WHERE c.user_id = :uid "
+            "ORDER BY r.updated_at DESC"
+        ), {"uid": user.id})).all()
+    except Exception:  # noqa: BLE001
+        return []
+    return [
+        SelectorRegistryEntry(
+            channel_id=r.channel_id, intent=r.intent, selectors=r.selectors,
+            source=r.source, heal_count=r.heal_count, updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
 
 
 TierName = Literal["quick_check", "channel_patrol", "stuck_state_sweep", "deep_verify", "daily_reset"]

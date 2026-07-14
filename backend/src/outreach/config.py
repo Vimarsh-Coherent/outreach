@@ -100,6 +100,7 @@ class Settings(BaseSettings):
 
     li_daily_cap_connect: int = 20
     li_daily_cap_dm: int = 50  # bumped from 25 for testing
+    li_daily_cap_like: int = 40
     # LinkedIn caps reset at local MIDNIGHT in this timezone (calendar-day reset),
     # so "a new day" always starts at 0 — not a rolling 24h window.
     li_cap_reset_timezone: str = "Asia/Kolkata"

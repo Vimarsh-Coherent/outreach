@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import PageHero, { heroBtnPrimary } from "../components/PageHero";
 import {
+  SelectorRegistryEntry,
   WatchdogEvent,
   WatchdogTier,
+  getSelectorRegistry,
   getWatchdogState,
   resetBreaker,
   runTier,
@@ -18,11 +20,16 @@ const TIERS: { id: WatchdogTier; label: string; cadence: string; description: st
 ];
 
 const STATUS_STYLE: Record<string, string> = {
-  healthy:   "text-emerald-700 bg-emerald-50  border-emerald-200",
-  issue:     "text-amber-800   bg-amber-50    border-amber-200",
-  emergency: "text-rose-800    bg-rose-50     border-rose-200",
-  healed:    "text-violet-800  bg-violet-50   border-violet-200",
+  healthy:        "text-emerald-700 bg-emerald-50  border-emerald-200",
+  issue:          "text-amber-800   bg-amber-50    border-amber-200",
+  emergency:      "text-rose-800    bg-rose-50     border-rose-200",
+  healed:         "text-violet-800  bg-violet-50   border-violet-200",
+  pattern_change: "text-orange-900  bg-orange-50   border-orange-300",
 };
+
+function intentLabel(key: string): string {
+  return key.replace(/_/g, " ");
+}
 
 function StatusDot({ ok }: { ok: boolean }) {
   return <span className={`inline-block w-2.5 h-2.5 rounded-full ${ok ? "bg-emerald-500" : "bg-rose-500"}`} />;
@@ -43,6 +50,11 @@ export default function Watchdog() {
     queryKey: ["watchdog-state"],
     queryFn: getWatchdogState,
     refetchInterval: 10_000,
+  });
+  const { data: selectorRegistry } = useQuery({
+    queryKey: ["watchdog-selector-registry"],
+    queryFn: getSelectorRegistry,
+    refetchInterval: 15_000,
   });
 
   const runMut = useMutation({

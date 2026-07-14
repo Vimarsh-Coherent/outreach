@@ -21,7 +21,7 @@ from outreach.schemas.followup import (
     SendRequest,
     SendResponse,
 )
-from outreach.services.followup_agent import draft_for_lead
+from outreach.services.followup_agent import draft_for_lead, resolve_include_meeting_link
 from outreach.services.threading_email import make_message_id
 from outreach.utils.crypto import decrypt_json
 
@@ -69,10 +69,18 @@ async def draft(
             template_subject = template_subject or "Following up"
             template_body = template_body or "Hi {{first_name}},\n\nWanted to follow up — let me know what you think.\n\nBest,"
 
+    include_meeting_link, _ = await resolve_include_meeting_link(session, lead.id)
+
     draft = await draft_for_lead(
         session, lead.id,
         template_subject=template_subject,
         template_body=template_body,
+        contact_snapshot={
+            "email": lead.email, "first_name": lead.first_name,
+            "last_name": lead.last_name, "company": lead.company, "title": lead.title,
+            "sender_name": user.display_name, "meeting_link": user.meeting_link or "",
+        },
+        include_meeting_link=include_meeting_link,
     )
     return DraftResponse(
         subject=draft.subject, body=draft.body, notes=draft.notes,

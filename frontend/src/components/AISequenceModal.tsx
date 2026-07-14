@@ -239,6 +239,7 @@ export default function AISequenceModal({ onClose }: Props) {
                           <option value="email">Email</option>
                           <option value="linkedin_connect">LinkedIn Connect</option>
                           <option value="linkedin_dm">LinkedIn Message</option>
+                          <option value="linkedin_like">LinkedIn Post Like</option>
                           <option value="call">Call</option>
                           <option value="sms">SMS</option>
                           <option value="whatsapp">WhatsApp</option>

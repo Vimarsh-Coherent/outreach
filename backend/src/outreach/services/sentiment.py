@@ -31,17 +31,22 @@ VALID_LABELS: set[str] = {
 DEFAULT_MODEL = "claude-haiku-4-5"  # Anthropic model when DeepSeek isn't configured
 
 SYSTEM_PROMPT = (
-    "You classify cold-outreach reply emails. "
+    "You classify cold-outreach reply messages (email, LinkedIn, WhatsApp). "
     "Read the reply (and the original outreach for context) and pick exactly one label. "
-    "Be conservative: prefer 'neutral' over 'positive' unless intent is clear.\n\n"
+    "Be conservative: prefer 'neutral' over 'positive' unless intent is clear — but a reply "
+    "that expresses willingness, enthusiasm, or agreement toward the outreach's ask "
+    "(accepting a connection warmly, \"happy to\", \"would love to\", \"sounds great\", "
+    "\"sure, let's do it\") IS clear positive intent, even if short. Reserve 'neutral' for "
+    "replies with no expressed sentiment either way.\n\n"
     "Labels:\n"
-    " - positive     : interested, asking for info / call / meeting\n"
+    " - positive     : interested, asking for info / call / meeting, or a warm/willing "
+    "response to the outreach's ask (e.g. gladly accepting a connection or invite)\n"
     " - interested   : lukewarm engagement (\"send details\", \"next quarter maybe\")\n"
     " - objection    : specific objection (price, timing, wrong person)\n"
     " - negative     : clearly not interested but not opt-out\n"
     " - unsubscribe  : asks to stop, remove, opt out\n"
     " - auto_reply   : OOO / vacation / automated bounce-like\n"
-    " - neutral      : acknowledgement only (\"thanks\", \"got it\")"
+    " - neutral      : flat acknowledgement with no expressed sentiment (\"thanks\", \"got it\", \"ok\")"
 )
 
 USER_TEMPLATE = (
@@ -82,8 +87,11 @@ async def classify_reply(
     )
 
     try:
+        # 200 was too tight — DeepSeek intermittently spends most/all of that
+        # budget before finishing the JSON (observed: empty or truncated
+        # mid-string output), which silently fell back to neutral/0.0 below.
         result = await llm_client.complete(
-            system=SYSTEM_PROMPT, user=user, max_tokens=200, anthropic_model=model,
+            system=SYSTEM_PROMPT, user=user, max_tokens=400, anthropic_model=model,
         )
     except Exception as e:  # noqa: BLE001
         log.warning("sentiment call failed: %s", e)
