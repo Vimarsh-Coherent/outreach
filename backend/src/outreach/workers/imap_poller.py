@@ -38,6 +38,16 @@ def _ssl_ctx() -> ssl.SSLContext:
     return ssl.create_default_context()
 
 
+def is_self_echo(from_addr: str | None, self_addrs: set[str]) -> bool:
+    """True when an inbound message's From is one of THIS channel's own addresses.
+
+    Gmail mirrors sent mail into All Mail, so the poller can re-fetch our own
+    outbound email. Such a message is never a lead reply — it must be skipped
+    before matching, or it threads back to the step by Message-ID and becomes a
+    false "reply" (which sentiment then scores positive on our own copy)."""
+    return bool(from_addr) and from_addr.strip().lower() in self_addrs
+
+
 async def _match_reply_by_sender(from_email: str, received_at: datetime) -> int | None:
     """Fallback for Gmail which rewrites Message-IDs on send.
     Finds the latest sent email step_run for the lead with this email address
@@ -76,10 +86,22 @@ async def _poll_channel(channel: Channel, search_days: int = 7) -> dict:
         log.warning("imap channel %d: bad config: %s", channel.id, e)
         return {"channel_id": channel.id, "error": f"bad_config:{e}"}
 
+    # Addresses that belong to THIS channel (the outreach user's own account).
+    # Gmail keeps a copy of every sent message in "[Gmail]/All Mail", so the
+    # poller can re-fetch our own outbound email. Without this guard it threads
+    # back to the step by its @outreach.local Message-ID and gets logged as a
+    # bogus inbound "reply" (then sentiment scores our own copy as positive).
+    smtp_cfg = cfg_dict.get("smtp") or {}
+    self_addrs = {
+        a.strip().lower()
+        for a in (smtp_cfg.get("from_email"), smtp_cfg.get("username"), cfg.username)
+        if a
+    }
+
     use_ssl = cfg.security == "ssl_tls"
     client_cls = aioimaplib.IMAP4_SSL if use_ssl else aioimaplib.IMAP4
     client = client_cls(host=cfg.host, port=cfg.port, timeout=cfg.timeout_seconds)
-    counts = {"channel_id": channel.id, "fetched": 0, "reply": 0, "bounce": 0, "auto_reply": 0, "unrelated": 0, "errors": 0}
+    counts = {"channel_id": channel.id, "fetched": 0, "reply": 0, "bounce": 0, "auto_reply": 0, "unrelated": 0, "self_echo": 0, "errors": 0}
 
     try:
         await client.wait_hello_from_server()
@@ -148,6 +170,14 @@ async def _poll_channel(channel: Channel, search_days: int = 7) -> dict:
                 continue
             counts["fetched"] += 1
             parsed = parse_inbound(raw)
+
+            # Self-echo guard: skip our OWN outbound copy (Gmail mirrors sent mail
+            # into All Mail). Its From is this channel's own address, so it's never
+            # a real reply — dropping it here prevents a false reply event + a
+            # bogus "positive" sentiment on our own outreach copy.
+            if is_self_echo(parsed.from_addr, self_addrs):
+                counts["self_echo"] = counts.get("self_echo", 0) + 1
+                continue
 
             # Sender-based fallback: Gmail replaces our Message-ID with its own, so the
             # HMAC match in parse_inbound fails and it returns "unrelated". If the From
