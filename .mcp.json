@@ -1,13 +1,13 @@
 {
   "mcpServers": {
     "code-review-graph": {
-      "command": "C:\\Users\\Ambika Soni\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+      "command": "C:\\Users\\vimarsh.CMI\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe",
       "args": [
         "-m",
         "code_review_graph",
         "serve"
       ],
-      "cwd": "C:\\Users\\Ambika Soni\\Downloads\\outreach",
+      "cwd": "C:\\Users\\vimarsh.CMI\\coherent-outreach",
       "type": "stdio"
     }
   }
